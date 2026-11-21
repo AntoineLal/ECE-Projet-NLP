@@ -256,13 +256,22 @@ PERSONAS = [
     ("Amateur d'équipe : au moins 3 sports collectifs",
      "J'aime les sports collectifs, jouer en équipe avec des amis, courir et me défouler.",
      lambda o, df: sum("sport collectif" in df.loc[df.nom_sport == r.name, "categories_l"].iloc[0] for r in o["results"]) >= 3),
+    ("Épaule blessée, tennis pratiqué : doux, intérieur, sans épaule ni raquette",
+     "Je pratique la salle de sport et le tennis mais je me suis blessé à l'épaule donc j'aimerais trouver un sport plus calme et plus doux qui pourrait me soulager l'épaule pendant ma réhabilitation. Je préfère un sport d'intérieur qui ne pose pas de problème avec la météo.",
+     lambda o, df: all("sport de raquette" not in df.loc[df.nom_sport == r.name, "categories_l"].iloc[0]
+                       and df.loc[df.nom_sport == r.name, "intensite_loisir_1_5"].iloc[0] <= 3
+                       and "intérieur" in df.loc[df.nom_sport == r.name, "environnement_l"].iloc[0] for r in o["results"])
+                  and sum("épaules" in df.loc[df.nom_sport == r.name, "zones_corps_sollicitees_l"].iloc[0] for r in o["results"]) <= 1),
+    ("Tendinite au coude : pas de raquette, pas d'avant-bras sollicité",
+     "J'ai une tendinite au coude, j'ai mal à l'avant-bras. Je veux garder la forme et travailler mon endurance en douceur.",
+     lambda o, df: all("avant-bras" not in df.loc[df.nom_sport == r.name, "zones_corps_sollicitees_l"].iloc[0] for r in o["results"])),
 ]
 with tabs[6]:
     st.write("Scénarios types qui vérifient que les contraintes et la cohérence de la recommandation tiennent.")
     if st.button("▶️ Lancer la suite de tests", type="primary"):
         res = []
         for name, text, check in PERSONAS:
-            lvl = "confirmé" if "confirmé" in text else "occasionnel"
+            lvl = "confirmé" if "confirmé" in text else ("régulier" if "salle de sport" in text else "occasionnel")
             t0 = time.perf_counter()
             o = engine.recommend(UserProfile(text=text, experience=lvl))
             ok = bool(check(o, engine.df))

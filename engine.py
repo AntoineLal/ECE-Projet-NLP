@@ -43,6 +43,7 @@ ALL_GOALS = ["endurance", "force", "souplesse", "équilibre", "coordination", "d
 
 WATER_TAGS = {"sport aquatique", "sport nautique", "glisse sur l'eau", "nage", "pagaie", "rame", "navigation à voile"}
 FAMILIES = {
+    "Sports collectifs": {"sport collectif"},
     "Sports de ballon": {"jeu de ballon"},
     "Raquette": {"sport de raquette"},
     "Combat": {"sport de combat", "combat de percussion", "combat de préhension"},
@@ -56,7 +57,7 @@ FAMILIES = {
     "Escalade": {"escalade", "franchissement"},
     "Équitation": {"équitation"},
 }
-TEXT_FAM = {"fam:ballon": "Sports de ballon", "fam:raquette": "Raquette", "fam:combat": "Combat", "fam:eau": "Eau",
+TEXT_FAM = {"fam:collectif": "Sports collectifs", "fam:ballon": "Sports de ballon", "fam:raquette": "Raquette", "fam:combat": "Combat", "fam:eau": "Eau",
             "fam:glisse": "Glisse (neige, glace, roulettes)", "fam:course": "Course et athlétisme",
             "fam:cyclisme": "Cyclisme", "fam:gym-danse": "Gymnastique et danse", "fam:cible": "Précision et cible",
             "fam:marche": "Marche et randonnée", "fam:escalade": "Escalade"}
@@ -118,6 +119,8 @@ class Resolved:
     no_contact: bool
     no_water: bool
     no_jump: bool
+    injured: list
+    gentle: bool
     no_outdoor: bool
     no_indoor: bool
     target_intensity: float
@@ -261,17 +264,27 @@ class Recommender:
         no_in = "no_indoor" in sig.constraints or p.environnement == "extérieur"
 
         target = float(np.clip(1 + 0.5 * ab["endurance"] + 0.5 * L + 0.25 * (p.motivation - 3), 1, 5))
+        if sig.gentle:
+            if target > 2.0:
+                notes.append("Pratique douce demandée dans votre texte : intensité cible plafonnée à 2/5")
+            target = min(target, 2.0)
+        if sig.injured_zones:
+            notes.append("Blessure / rééducation détectée (" + ", ".join(sorted(sig.injured_zones)) +
+                         ") : les sports qui sollicitent cette zone sont écartés ou pénalisés")
+        weather_indoor = sig.weather and envs == ["intérieur"]
+        if weather_indoor:
+            notes.append("Pratique en intérieur + sensibilité à la météo : sports uniquement extérieurs écartés")
         return Resolved(p=p, sig=sig, abilities=ab, exp_level=L, exp_label=exp, goals=goals, goal_zones=goal_zones,
                         formats=sorted(formats), envs=envs, families=sorted(families),
                         disliked_families=sorted(dislike_fam), disliked_formats=sorted(disliked_formats),
-                        impact_tol=tol, spare_hard=list(p.spare_zones),
-                        spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones)),
-                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, no_outdoor=no_out and p.environnement != "extérieur",
+                        impact_tol=tol, spare_hard=sorted(set(p.spare_zones) | sig.injured_zones),
+                        spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones) - sig.injured_zones),
+                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
                         no_indoor=no_in and p.environnement != "intérieur",
                         target_intensity=target, notes=notes, sources=src)
 
     # ---------------- 2. filtrage dur ----------------
-    def filter_hard(self, R: Resolved) -> tuple[np.ndarray, dict]:
+    def filter_hard(self, R: Resolved, relax_injury: bool = False) -> tuple[np.ndarray, dict]:
         keep = np.ones(len(self.df), bool)
         reasons: dict[str, list[str]] = {}
         for i, r in self.df.iterrows():
@@ -293,8 +306,16 @@ class Recommender:
             if R.no_indoor and R.p.environnement == "indifférent" and "extérieur" not in r.environnement_l:
                 why.append("uniquement en intérieur")
             ov = set(_n(z) for z in R.spare_hard) & set(r.zones_corps_sollicitees_l)
-            if ov and (r.impacts_1_3 >= 3 or r.force_1_5 >= 4):
+            inj = set(_n(z) for z in R.injured) & ov
+            gentle_enough = r.intensite_loisir_1_5 <= 2 and r.impacts_1_3 == 1 and r.force_1_5 <= 2
+            if inj and not (relax_injury and gentle_enough):
+                why.append("sollicite la zone blessée (" + ", ".join(sorted(inj)) + ") sans être assez doux")
+            elif ov and (r.impacts_1_3 >= 3 or r.force_1_5 >= 4):
                 why.append("sollicite fortement une zone à ménager (" + ", ".join(sorted(ov)) + ")")
+            if R.gentle and r.impacts_1_3 >= 3:
+                why.append("impacts marqués alors que vous cherchez une pratique douce")
+            if R.gentle and r.intensite_loisir_1_5 >= 4:
+                why.append("intensité soutenue alors que vous cherchez une pratique douce")
             if R.p.budget_seance_max is not None and r.budget_seance_min_eur > R.p.budget_seance_max:
                 why.append(f"budget séance dès {int(r.budget_seance_min_eur)} €")
             if why:
@@ -416,6 +437,22 @@ class Recommender:
             f *= 0.85; why.append("hors des types d'activités que vous aimez (×0,85)")
         if R.formats and not (set(R.formats) & set(r.format_pratique_l)):
             f *= 0.92; why.append("format de pratique différent de celui souhaité (×0,92)")
+        if R.gentle and r.intensite_loisir_1_5 >= 4:
+            f *= 0.75; why.append("trop intense pour une pratique douce (×0,75)")
+        elif R.gentle and r.intensite_loisir_1_5 == 3:
+            f *= 0.92; why.append("intensité modérée alors que vous cherchez du doux (×0,92)")
+        if R.gentle and r.force_1_5 >= 4:
+            f *= 0.9; why.append("effort de force marqué pour une pratique douce (×0,9)")
+        if R.gentle and "saut" in r.categories_l:
+            f *= 0.85; why.append("sauts : peu compatibles avec une pratique douce (×0,85)")
+        if R.gentle and r.impacts_1_3 == 2:
+            f *= 0.92; why.append("impacts présents pour une pratique douce (×0,92)")
+        inj = set(_n(z) for z in R.injured) & set(r.zones_corps_sollicitees_l)
+        if inj:
+            if getattr(R, "relaxed", False):
+                f *= 0.6; why.append("⚠ sollicite la zone blessée (" + ", ".join(sorted(inj)) + ") : à valider avec un professionnel de santé (×0,6)")
+            else:
+                f *= 0.8; why.append("sollicite la zone blessée : " + ", ".join(sorted(inj)) + " (×0,8)")
         if R.exp_level == 1 and r.difficulte_entree_1_3 == 3:
             f *= 0.9; why.append("technique exigeante pour un débutant (×0,9)")
         return f, why
@@ -472,7 +509,12 @@ class Recommender:
             t0 = t1
 
         R = self.resolve(p); lap("extraction")
-        keep, excluded = self.filter_hard(R); lap("filtrage")
+        keep, excluded = self.filter_hard(R)
+        if keep.sum() < top_k and R.injured:
+            keep, excluded = self.filter_hard(R, relax_injury=True)
+            R.relaxed = True
+            R.notes.append("Peu d'activités sans sollicitation de la zone blessée : sports très doux assouplis acceptés")
+        lap("filtrage")
         texts = self.user_block_texts(R)
         sem, sb_raw, tf_raw = self.sem_scores(texts); lap("embeddings+cosinus")
 
@@ -497,7 +539,11 @@ class Recommender:
 
         # phrase utilisateur la plus proche (explicabilité)
         sent_best = self._best_sentences(p.text)
-        order = sorted([x for x in rows if keep[x[0]]], key=lambda x: -x[1])
+        inj_set = {_n(z) for z in R.injured}
+
+        def touches_injury(i):
+            return bool(inj_set & set(self.df.loc[i, "zones_corps_sollicitees_l"]))
+        order = sorted([x for x in rows if keep[x[0]]], key=lambda x: (touches_injury(x[0]), -x[1]))
         results = []
         for i, tot, blocks, st, det in order[:top_k]:
             r = self.df.loc[i]

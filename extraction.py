@@ -8,6 +8,19 @@ from dataclasses import dataclass, field
 
 from preprocess import fold, split_sentences
 
+
+def split_clauses(text: str) -> list[str]:
+    out = []
+    for s in split_sentences(text):
+        out += [c.strip() for c in re.split(CLAUSE_SPLIT, s) if len(c.strip()) > 3]
+    return out
+
+
+def is_practice(clause: str) -> bool:
+    f = fold(clause)
+    return re.search(PRACTICE, f) is not None and not re.search(r"prefere|aime|adore|envie|souhait|voudrais", f)
+
+
 NEG = r"(?:\bpas\b|\bsans\b|\bjamais\b|\bni\b|\baucun\w*|\bevit\w+|\bn'aime\b|\bdeteste\w*)"
 
 # --- objectifs : étiquette (dataset / capacité) -> regex ------------------------------------
@@ -34,7 +47,8 @@ GOAL_TRIGGER = (r"souhait|voudrais|veux|aimerais|objectif|ameliorer|amelioration
 ZONE_LEX = {
     "dos": r"\bdos\b|lombaire|dorsal|colonne",
     "épaules": r"epaule",
-    "bras": r"\bbras\b|biceps|triceps",
+    "bras": r"\bbras\b|biceps|triceps|coude",
+    "avant-bras": r"avant-bras|coude|epicondyl",
     "abdominaux": r"abdo|ventre|sangle abdominale|\bcore\b",
     "cuisses": r"cuisse|quadriceps|jambes?",
     "hanches et fessiers": r"hanche|fessier|bassin",
@@ -52,6 +66,7 @@ PREF_LEX = {
     "format:duo": r"en duo|a deux|avec un partenaire|face a face",
     "env:extérieur": r"exterieur|dehors|plein air|en nature|grand air",
     "env:intérieur": r"interieur|en salle|\bsalle\b|gymnase|a l'abri",
+    "fam:collectif": r"sports? collectifs?|jeux? collectifs?|sports? d'equipe|jeu d'equipe",
     "fam:ballon": r"ballon|football|\bfoot\b|basket|volley|hand\b|rugby",
     "fam:raquette": r"raquette|tennis|badminton|ping|padel|squash",
     "fam:combat": r"combat|boxe|judo|karate|arts? martiaux",
@@ -85,6 +100,12 @@ CONDITION_LEX = [
     ("souplesse", r"raide|manque de souplesse|peu souple|courbatu", -1, "raideur déclarée"),
     ("souplesse", r"tres souple|bonne souplesse|bonne mobilite", +1, "bonne souplesse déclarée"),
 ]
+INJURY = r"blesse|blessure|douleur|mal (?:au|aux|a)|operee?|tendinite|rehabilit|reeduc|convalescen|hernie|entorse|soulag|luxation|fracture|lumbago"
+GENTLE = r"\bcalmes?\b|\bdoux\b|\bdouces?\b|douceur|tranquille|\blegere?s?\b|sans forcer|apais|menag|sans effort|reeduc|rehabilit|convalescen|soulag"
+WEATHER = r"meteo|pluie|froid|intemperies|mauvais temps|climat"
+PRACTICE = r"(?:\bje|\bj') ?(?:pratique|joue|fais|faisais|pratiquais|jouais|suis inscrit|vais)\b|\bj'ai (?:fait|pratique|joue)\b"
+CLAUSE_SPLIT = r",|;|\bmais\b|\bdonc\b|\bcar\b|\bpuis\b"
+
 LEVEL_LEX = [
     ("débutant", r"debutant|jamais (?:fait|pratique)|sedentaire|je reprends|pas sportif|novice"),
     ("confirmé", r"confirme|experimente|competition|haut niveau|depuis (?:des )?annees"),
@@ -103,6 +124,10 @@ class TextSignals:
     condition_notes: list = field(default_factory=list)
     level_hint: str | None = None
     budget: int | None = None
+    injured_zones: set = field(default_factory=set)   # blessure / douleur / rééducation explicite
+    gentle: bool = False                               # demande d'une pratique douce
+    weather: bool = False                              # sensibilité à la météo
+    practice_clauses: list = field(default_factory=list)  # ce que l'utilisateur pratique déjà
     sentences: list = field(default_factory=list)
 
 
@@ -132,11 +157,26 @@ def extract_signals(text: str) -> TextSignals:
                 if m and not _negated(sent, m.start()):
                     sig.goals.add(goal)
 
-    # préférences : uniquement dans les phrases qui expriment un goût (évite « je peux marcher longtemps » = préférence)
-    pref_text = " . ".join(f for f in (fold(s) for s in sig.sentences) if re.search(PREF_CUE, f))
+    sig.practice_clauses = [c for c in split_clauses(text) if is_practice(c)]
+    # préférences : uniquement dans les clauses qui expriment un goût (ni « je pratique X », ni un fait neutre)
+    clauses = [fold(c) for c in split_clauses(text) if not is_practice(c)]
+    pref_text = " . ".join(c for c in clauses if re.search(PREF_CUE, c))
     for key, rx in PREF_LEX.items():
         for m in re.finditer(rx, pref_text):
             (sig.disliked if _negated(pref_text, m.start()) else sig.prefs).add(key)
+    sig.gentle = re.search(GENTLE, t) is not None
+    sig.weather = re.search(WEATHER, t) is not None
+    for sent in (fold(s) for s in sig.sentences):
+        if re.search(INJURY, sent):
+            for zone, rx in ZONE_LEX.items():
+                if re.search(rx, sent):
+                    sig.injured_zones.add(zone)
+                    sig.spare_zones.add(zone)
+                    sig.goal_zones.discard(zone)   # « me soulager l'épaule » n'est pas « renforcer l'épaule »
+    if sig.gentle:
+        sig.goals.add("détente")
+    if "format:équipe" in sig.prefs or "fam:collectif" in sig.prefs:
+        sig.goals.add("jeu collectif")
     for key, rx in CONSTRAINT_LEX.items():
         if re.search(rx, t):
             sig.constraints.add(key)
@@ -166,8 +206,12 @@ BLOCK_CUES = {
 
 
 def route_sentences(text: str) -> dict[str, list[str]]:
+    """Affecte chaque clause à un bloc. Les clauses « je pratique X » (activité actuelle) sont écartées des blocs
+    sémantiques : elles décrivent le passé de l'utilisateur, pas ce qu'il recherche."""
     routed = {b: [] for b in BLOCK_CUES}
-    for s in split_sentences(text):
+    for s in split_clauses(text):
+        if is_practice(s):
+            continue
         f = fold(s)
         hit = False
         for block, rx in BLOCK_CUES.items():
