@@ -70,6 +70,7 @@ PREF_CUE = r"prefer|aime|adore|plutot|envie|attir|passionn|pratiquer|deteste|int
 CONSTRAINT_LEX = {
     "no_contact": r"(?:pas|sans|aucun|evit\w+)\W+(?:\w+\W+){0,3}(?:contact|combat|bagarre)",
     "joint_sensitive": r"articulation|genou|arthrose|tendin|menisque|\bchocs?\b|\bimpacts?\b",
+    "no_jump": r"(?:pas|sans|evit\w+)\W+(?:\w+\W+){0,3}sauts?|ne pas sauter",
     "no_water": r"(?:ne sais pas nager|sais pas nager|peur de l'eau|aquaphobe|pas d'eau|sans eau)",
     "no_outdoor": r"(?:pas|sans|evit\w+)\W+(?:\w+\W+){0,2}(?:exterieur|dehors|froid|pluie)",
     "no_indoor": r"(?:pas|sans|evit\w+)\W+(?:\w+\W+){0,2}(?:salle|interieur|gymnase)",
@@ -101,6 +102,7 @@ class TextSignals:
     condition_adj: dict = field(default_factory=dict)
     condition_notes: list = field(default_factory=list)
     level_hint: str | None = None
+    budget: int | None = None
     sentences: list = field(default_factory=list)
 
 
@@ -145,6 +147,9 @@ def extract_signals(text: str) -> TextSignals:
     for lvl, rx in LEVEL_LEX:
         if re.search(rx, t):
             sig.level_hint = lvl
+    m = re.search(r"(\d{1,3})\s*(?:euros?|€)", t)
+    if m and re.search(r"budget|maximum|max|pas plus|au plus|jusqu'a|moins de|par seance|la seance", t):
+        sig.budget = int(m.group(1))
     sig.prefs -= sig.disliked
     if "no_contact" in sig.constraints:
         sig.prefs.discard("fam:combat")

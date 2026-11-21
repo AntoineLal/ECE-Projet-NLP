@@ -29,8 +29,8 @@ embeddings des 70 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'appli
 
 ## Scoring
 
-Score d'un bloc = **50 % structuré** (échelles 1–5, étiquettes `objectifs`, `format_pratique`, `impacts`… du jeu de
-données) + **50 % sémantique** (70 % SBERT + 30 % TF-IDF).
+Score d'un bloc = **40 % structuré** (échelles 1–5, étiquettes `objectifs`, `format_pratique`, `impacts`… du jeu de
+données) + **60 % sémantique** (70 % SBERT + 30 % TF-IDF).
 
 Pondération par défaut (modifiable dans l'interface) :
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -29,7 +29,7 @@ BLOCK_LABELS = {"condition": "Condition physique", "objectifs": "Objectifs",
                 "preferences": "Préférences", "contraintes": "Contraintes"}
 # Pondération par défaut (justifiée dans le README / l'interface)
 DEFAULT_WEIGHTS = {"objectifs": 0.35, "condition": 0.30, "preferences": 0.20, "contraintes": 0.15}
-STRUCT_SHARE = 0.5        # part du score structuré dans un bloc (le reste = sémantique)
+STRUCT_SHARE = 0.4        # part du score structuré dans un bloc (le reste = sémantique)
 SBERT_SHARE = 0.7         # dans la partie sémantique : SBERT vs TF-IDF lexical
 
 CAPS = ["endurance", "force", "souplesse", "coordination", "equilibre"]
@@ -116,6 +116,7 @@ class Resolved:
     spare_soft: list
     no_contact: bool
     no_water: bool
+    no_jump: bool
     no_outdoor: bool
     no_indoor: bool
     target_intensity: float
@@ -210,6 +211,9 @@ class Recommender:
     def resolve(self, p: UserProfile) -> Resolved:
         sig = extract_signals(p.text)
         notes, src = [], {}
+        if p.budget_seance_max is None and sig.budget is not None:
+            p = replace(p, budget_seance_max=sig.budget)
+            notes.append(f"Budget de {sig.budget} € par séance détecté dans votre texte")
         ab = {"endurance": p.endurance, "force": p.force, "souplesse": p.mobilite}
         for cap, delta in sig.condition_adj.items():
             new = int(min(5, max(1, ab[cap] + delta)))
@@ -261,7 +265,7 @@ class Recommender:
                         disliked_families=sorted(dislike_fam), disliked_formats=sorted(disliked_formats),
                         impact_tol=tol, spare_hard=list(p.spare_zones),
                         spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones)),
-                        no_contact=no_contact, no_water=no_water, no_outdoor=no_out and p.environnement != "extérieur",
+                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, no_outdoor=no_out and p.environnement != "extérieur",
                         no_indoor=no_in and p.environnement != "intérieur",
                         target_intensity=target, notes=notes, sources=src)
 
@@ -275,6 +279,8 @@ class Recommender:
                 why.append("contact réglementé")
             if R.no_water and (set(r.categories_l) & WATER_TAGS):
                 why.append("pratique dans l'eau")
+            if R.no_jump and "saut" in r.categories_l:
+                why.append("repose sur des sauts")
             if R.impact_tol == "faible" and r.impacts_1_3 >= 3:
                 why.append("impacts fréquents")
             if R.p.environnement == "intérieur" and "intérieur" not in r.environnement_l:

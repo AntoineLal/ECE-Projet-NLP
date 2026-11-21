@@ -5,7 +5,7 @@ Lancement :  streamlit run app.py
 import plotly.graph_objects as go
 import streamlit as st
 
-from engine import (ALL_GOALS, BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, FAMILIES, IMPACT_TOL,
+from engine import (BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, 
                     Recommender, UserProfile)
 
 st.set_page_config(page_title="Recommandation sportive", page_icon="🏃", layout="wide")
@@ -64,39 +64,22 @@ if "txt" not in st.session_state:
 st.button("📝 Remplir le texte avec l'exemple", on_click=lambda: st.session_state.update(txt=EXAMPLE))
 
 with st.form("profil"):
-    st.subheader("1 · Votre texte libre")
-    text = st.text_area("Décrivez votre condition physique, vos objectifs, vos préférences et vos limitations",
-                        key="txt", height=140,
-                        placeholder="Ex. : Je suis débutant, je me fatigue vite en courant mais je marche longtemps…")
+    st.subheader("1 · Décrivez-vous avec vos mots")
+    st.caption("C'est le cœur de l'analyse : condition physique, objectifs, préférences (individuel/équipe, intérieur/"
+               "extérieur, types de sport…), limitations (articulations, dos, contact, eau…), budget, disponibilité.")
+    text = st.text_area("Votre profil sportif", key="txt", height=200,
+                        placeholder="Ex. : Je suis débutant, je me fatigue vite en courant mais je marche longtemps. "
+                                    "Je veux améliorer mon endurance et renforcer mon dos, sans trop solliciter mes articulations…")
 
+    st.subheader("2 · Auto-évaluation rapide")
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("2 · Condition physique")
         endurance = st.slider("Endurance (1 = très faible, 5 = excellente)", 1, 5, 3)
         force = st.slider("Force musculaire", 1, 5, 3)
         mobilite = st.slider("Mobilité / souplesse", 1, 5, 3)
+    with c2:
         motivation = st.slider("Motivation", 1, 5, 3)
         experience = st.select_slider("Niveau d'activité physique actuel", list(EXPERIENCE), value="occasionnel")
-    with c2:
-        st.subheader("3 · Objectifs")
-        goals = st.multiselect("Ce que vous voulez développer", ALL_GOALS)
-        goal_zones = st.multiselect("Zones du corps à renforcer", ZONES)
-        st.subheader("4 · Préférences")
-        formats = st.multiselect("Format de pratique", ["individuel", "duo", "équipe", "groupe"])
-        environnement = st.radio("Environnement", ["indifférent", "intérieur", "extérieur"], horizontal=True)
-        families = st.multiselect("Types d'activités appréciés", list(FAMILIES))
-
-    st.subheader("5 · Limitations, contraintes et disponibilité")
-    c3, c4, c5 = st.columns(3)
-    with c3:
-        impact = st.select_slider("Tolérance aux chocs / impacts", IMPACT_TOL, value="moyenne")
-        spare = st.multiselect("Zones à ménager (douleur, blessure)", ZONES)
-    with c4:
-        no_contact = st.checkbox("Pas de sport de contact")
-        no_water = st.checkbox("Pas d'activité dans l'eau (je ne sais pas nager, etc.)")
-        budget_on = st.checkbox("Limiter le budget par séance")
-        budget = st.number_input("Budget max par séance (€)", 0, 200, 20, 5, disabled=not budget_on)
-    with c5:
         sessions = st.slider("Séances par semaine", 1, 7, 3)
         minutes = st.slider("Durée d'une séance (min)", 20, 180, 60, 10)
 
@@ -104,12 +87,12 @@ with st.form("profil"):
 
 if not submitted:
     st.stop()
+if len(text.split()) < 8:
+    st.warning("Écrivez quelques phrases (objectifs, préférences, limitations) : l'analyse repose surtout sur votre texte.")
+    st.stop()
 
 profile = UserProfile(text=text, endurance=endurance, force=force, mobilite=mobilite, motivation=motivation,
-                      experience=experience, goals=goals, goal_zones=goal_zones, formats=formats,
-                      environnement=environnement, families=families, impact_tolerance=impact, spare_zones=spare,
-                      no_contact=no_contact, no_water=no_water, budget_seance_max=int(budget) if budget_on else None,
-                      sessions_per_week=sessions, minutes=minutes)
+                      experience=experience, sessions_per_week=sessions, minutes=minutes)
 out = engine.recommend(profile, weights)
 R, results = out["resolved"], out["results"]
 
@@ -194,7 +177,7 @@ with t1:
     fig.update_layout(barmode="group", yaxis_title="Score (%)", yaxis_range=[0, 100], legend_orientation="h",
                       legend_y=1.15, height=420, margin=dict(t=40))
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("Score d'un bloc = 50 % score structuré (échelles et étiquettes du jeu de données) + 50 % similarité "
+    st.caption("Score d'un bloc = 40 % score structuré (déduit du texte et des échelles) + 60 % similarité "
                "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur les 70 sports). Total = somme pondérée des blocs.")
 
 with t2:
