@@ -5,6 +5,8 @@ Lancement :  streamlit run app.py
 import plotly.graph_objects as go
 import streamlit as st
 
+from shared import get_engine
+from telemetry import get_logger, log_run
 from engine import (BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, 
                     Recommender, UserProfile)
 
@@ -18,26 +20,7 @@ ZONES = ["dos", "épaules", "bras", "abdominaux", "cuisses", "hanches et fessier
 BLOCK_COLORS = {"condition": "#2E7D6B", "objectifs": "#3B6FB6", "preferences": "#E0913A", "contraintes": "#8E5BB5"}
 
 
-class SbertEmbedder:
-    name = "paraphrase-multilingual-MiniLM-L12-v2"
-
-    def __init__(self):
-        from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(self.name)
-
-    def encode(self, texts):
-        return self.model.encode(list(texts), normalize_embeddings=True, show_progress_bar=False)
-
-
-@st.cache_resource(show_spinner="Chargement du modèle SBERT et indexation des 70 sports…")
-def get_engine():
-    try:
-        return Recommender(SbertEmbedder()), None
-    except Exception as e:  # modèle indisponible (hors-ligne…) : repli TF-IDF seul
-        return Recommender(None), str(e)
-
-
-engine, sbert_error = get_engine()
+engine, sbert_error, boot_s = get_engine()
 
 # ---------------------------------------------------------------- barre latérale
 with st.sidebar:
@@ -93,7 +76,15 @@ if len(text.split()) < 8:
 
 profile = UserProfile(text=text, endurance=endurance, force=force, mobilite=mobilite, motivation=motivation,
                       experience=experience, sessions_per_week=sessions, minutes=minutes)
-out = engine.recommend(profile, weights)
+try:
+    out = engine.recommend(profile, weights)
+except Exception:
+    get_logger().exception("Échec de la recommandation")
+    st.error("Une erreur est survenue pendant l'analyse (voir le panneau admin).")
+    st.stop()
+if st.session_state.get("_last_run_key") != (text, endurance, force, mobilite, motivation, experience, sessions, minutes, str(weights)):
+    log_run(profile, out, "SBERT+TFIDF" if engine.embedder else "TFIDF")
+    st.session_state["_last_run_key"] = (text, endurance, force, mobilite, motivation, experience, sessions, minutes, str(weights))
 R, results = out["resolved"], out["results"]
 
 # ---------------------------------------------------------------- synthèse du profil
@@ -177,6 +168,7 @@ with t1:
     fig.update_layout(barmode="group", yaxis_title="Score (%)", yaxis_range=[0, 100], legend_orientation="h",
                       legend_y=1.15, height=420, margin=dict(t=40))
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"⏱ Analyse réalisée en {out['timings']['total']:.0f} ms.")
     st.caption("Score d'un bloc = 40 % score structuré (déduit du texte et des échelles) + 60 % similarité "
                "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur les 70 sports). Total = somme pondérée des blocs.")
 

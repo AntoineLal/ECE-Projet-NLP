@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -394,6 +395,31 @@ class Recommender:
         cons = float(np.mean(cs))
         return {"condition": cond, "objectifs": obj, "preferences": pref, "contraintes": cons}, det
 
+    @staticmethod
+    def _penalty(R: Resolved, r) -> tuple[float, list[str]]:
+        """Garde-fou multiplicatif : les limitations déclarées ne doivent pas être diluées dans la moyenne des blocs."""
+        f, why = 1.0, []
+        if R.impact_tol == "faible":
+            if r.impacts_1_3 == 2:
+                f *= 0.85; why.append("impacts présents malgré des articulations fragiles (×0,85)")
+            if "saut" in r.categories_l:
+                f *= 0.85; why.append("sauts/réceptions (×0,85)")
+        elif R.impact_tol == "moyenne" and r.impacts_1_3 == 3:
+            f *= 0.92; why.append("impacts fréquents (×0,92)")
+        soft = {_n(z) for z in R.spare_soft} | {_n(z) for z in R.spare_hard}
+        ov = soft & set(r.zones_corps_sollicitees_l)
+        if ov:
+            f *= 1 - 0.06 * len(ov); why.append("zone à ménager sollicitée : " + ", ".join(sorted(ov)))
+        if R.target_intensity <= 2.5 and r.intensite_loisir_1_5 >= 4:
+            f *= 0.9; why.append("intensité nettement au-dessus de votre niveau (×0,9)")
+        if R.families and not any({_n(t) for t in FAMILIES[f]} & set(r.categories_l) for f in R.families):
+            f *= 0.85; why.append("hors des types d'activités que vous aimez (×0,85)")
+        if R.formats and not (set(R.formats) & set(r.format_pratique_l)):
+            f *= 0.92; why.append("format de pratique différent de celui souhaité (×0,92)")
+        if R.exp_level == 1 and r.difficulte_entree_1_3 == 3:
+            f *= 0.9; why.append("technique exigeante pour un débutant (×0,9)")
+        return f, why
+
     # ---------------- 3b. scores sémantiques ----------------
     def user_block_texts(self, R: Resolved) -> dict[str, str]:
         p = R.p
@@ -436,10 +462,19 @@ class Recommender:
     # ---------------- 4. recommandation ----------------
     def recommend(self, p: UserProfile, weights: dict | None = None, top_k: int = 5) -> dict:
         w = dict(DEFAULT_WEIGHTS if weights is None else weights)
-        R = self.resolve(p)
-        keep, excluded = self.filter_hard(R)
+        T = {}
+        t0 = time.perf_counter()
+
+        def lap(name):
+            nonlocal t0
+            t1 = time.perf_counter()
+            T[name] = (t1 - t0) * 1000
+            t0 = t1
+
+        R = self.resolve(p); lap("extraction")
+        keep, excluded = self.filter_hard(R); lap("filtrage")
         texts = self.user_block_texts(R)
-        sem, sb_raw, tf_raw = self.sem_scores(texts)
+        sem, sb_raw, tf_raw = self.sem_scores(texts); lap("embeddings+cosinus")
 
         rows = []
         for i, r in self.df.iterrows():
@@ -455,7 +490,10 @@ class Recommender:
                 if v is not None:
                     acc += w[b] * v
                     wsum += w[b]
-            rows.append((i, acc / wsum if wsum else 0.0, blocks, st, det))
+            pen, pwhy = self._penalty(R, r)
+            det["penalite"] = pwhy
+            rows.append((i, (acc / wsum if wsum else 0.0) * pen, blocks, st, det))
+        lap("scoring")
 
         # phrase utilisateur la plus proche (explicabilité)
         sent_best = self._best_sentences(p.text)
@@ -470,8 +508,10 @@ class Recommender:
         full = pd.DataFrame([{"sport": self.df.loc[i, "nom_sport"], "sport_id": self.df.loc[i, "sport_id"],
                               "total": tot, **{b: blocks[b] for b in BLOCKS}, "retenu": bool(keep[i])}
                              for i, tot, blocks, _, _ in rows]).sort_values("total", ascending=False)
+        methods = self._methods(R, texts, keep, rows); lap("explications+méthodes")
+        T["total"] = sum(T.values())
         return {"resolved": R, "results": results, "excluded": excluded, "texts": texts,
-                "full": full, "methods": self._methods(R, texts, keep, rows), "weights": w}
+                "full": full, "methods": methods, "weights": w, "timings": T}
 
     def _methods(self, R, texts, keep, rows, k=5) -> dict:
         g = " ".join(t for t in texts.values() if t)
@@ -508,6 +548,8 @@ class Recommender:
         pr = [d[0] for d in det["preferences"] if d[1] >= 0.6]
         if det["preferences"]:
             out.append({"block": "Préférences", "ok": bool(pr), "text": ("Correspond à : " + " ; ".join(pr)) if pr else "Ne correspond pas à vos préférences déclarées"})
+        if det.get("penalite"):
+            out.append({"block": "Garde-fou", "ok": False, "text": " ; ".join(det["penalite"])})
         out.append({"block": "Contraintes", "ok": det["contraintes"][0][1] >= 0.6, "text":
                     (f"Impacts {IMPACT_LABEL[int(r.impacts_1_3)]}, contact {r.contact}. " + " ; ".join(d[0] for d in det["contraintes"][1:])).strip()})
         if sent_best is not None:

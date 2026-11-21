@@ -49,3 +49,16 @@ non validées médicalement.
 ## Hors périmètre (volontairement)
 
 Chatbot, LLM, RAG et agent IA (extensions facultatives) ne sont pas implémentés ; le moteur fonctionne seul.
+
+## Panneau d'administration
+
+Page `Admin` (menu latéral de Streamlit) : KPIs et latences par étape, historique des runs avec *replay*
+(détection de régression), logs en direct, carte PCA des sports, labo de sensibilité aux poids et suite de
+7 scénarios de test. Mot de passe optionnel : variable d'environnement `ADMIN_PASSWORD`.
+Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/app.log` (non versionnés).
+
+## Garde-fous de recommandation
+
+En plus du filtrage dur, des pénalités multiplicatives (documentées dans le détail de chaque sport) évitent que
+une limitation déclarée soit diluée dans la moyenne : impacts avec articulations fragiles, sauts, zone à ménager,
+intensité trop élevée, technique exigeante pour un débutant, préférence explicite non respectée.
