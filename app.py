@@ -5,6 +5,7 @@ Lancement :  streamlit run app.py
 import plotly.graph_objects as go
 import streamlit as st
 
+import explain_ui
 from shared import get_engine
 from telemetry import get_logger, log_run
 from engine import (BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, 
@@ -68,23 +69,28 @@ with st.form("profil"):
 
     submitted = st.form_submit_button("🔍 Trouver mes sports", type="primary", use_container_width=True)
 
-if not submitted:
+if submitted:
+    if len(text.split()) < 8:
+        st.warning("Écrivez quelques phrases (objectifs, préférences, limitations) : l'analyse repose surtout sur votre texte.")
+        st.stop()
+    st.session_state["profile"] = UserProfile(text=text, endurance=endurance, force=force, mobilite=mobilite,
+                                              motivation=motivation, experience=experience,
+                                              sessions_per_week=sessions, minutes=minutes)
+if "profile" not in st.session_state:
     st.stop()
-if len(text.split()) < 8:
-    st.warning("Écrivez quelques phrases (objectifs, préférences, limitations) : l'analyse repose surtout sur votre texte.")
-    st.stop()
+profile = st.session_state["profile"]
+text, sessions, minutes = profile.text, profile.sessions_per_week, profile.minutes
 
-profile = UserProfile(text=text, endurance=endurance, force=force, mobilite=mobilite, motivation=motivation,
-                      experience=experience, sessions_per_week=sessions, minutes=minutes)
 try:
     out = engine.recommend(profile, weights)
 except Exception:
     get_logger().exception("Échec de la recommandation")
     st.error("Une erreur est survenue pendant l'analyse (voir le panneau admin).")
     st.stop()
-if st.session_state.get("_last_run_key") != (text, endurance, force, mobilite, motivation, experience, sessions, minutes, str(weights)):
+run_key = (repr(profile), str(weights))
+if st.session_state.get("_last_run_key") != run_key:
     log_run(profile, out, "SBERT+TFIDF" if engine.embedder else "TFIDF")
-    st.session_state["_last_run_key"] = (text, endurance, force, mobilite, motivation, experience, sessions, minutes, str(weights))
+    st.session_state["_last_run_key"] = run_key
 R, results = out["resolved"], out["results"]
 
 # ---------------------------------------------------------------- synthèse du profil
@@ -154,6 +160,10 @@ for rank, res in enumerate(results, 1):
             st.caption(f"Budget séance {int(r.budget_seance_min_eur)}–{int(r.budget_seance_max_eur)} € · "
                        f"matériel {int(r.budget_equipement_min_eur)}–{int(r.budget_equipement_max_eur)} € · "
                        f"équipement : {r.equipement.replace('|', ', ')}")
+
+# ---------------------------------------------------------------- pourquoi ?
+st.divider()
+explain_ui.render(out, text)
 
 # ---------------------------------------------------------------- visualisations
 st.divider()

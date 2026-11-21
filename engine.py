@@ -534,6 +534,9 @@ class Recommender:
                     wsum += w[b]
             pen, pwhy = self._penalty(R, r)
             det["penalite"] = pwhy
+            det["pen_factor"], det["wsum"] = pen, wsum
+            det["sem"] = {b: float(sem[b][i]) for b in sem}
+            det["struct"] = st
             rows.append((i, (acc / wsum if wsum else 0.0) * pen, blocks, st, det))
         lap("scoring")
 
@@ -550,6 +553,27 @@ class Recommender:
             sem_i = {b: float(sem[b][i]) for b in sem}
             results.append(Result(r.sport_id, r.nom_sport, r, tot, blocks, st, sem_i,
                                   self._bullets(R, r, det, sb_raw, tf_raw, i, sent_best)))
+        # anatomie de la décision pour les 70 sports (interface « Pourquoi ? »)
+        rank_of = {x[0]: n for n, x in enumerate(order, 1)}
+        anatomy = []
+        for i, tot, blocks, st, det in rows:
+            r = self.df.loc[i]
+            wn = {b: (w[b] / det["wsum"] if (blocks[b] is not None and det["wsum"]) else 0.0) for b in BLOCKS}
+            contrib = {b: (blocks[b] or 0.0) * wn[b] for b in BLOCKS}
+            anatomy.append({
+                "sport_id": r.sport_id, "name": r.nom_sport, "retained": bool(keep[i]),
+                "rank": rank_of.get(i), "in_top": rank_of.get(i, 99) <= top_k,
+                "excluded_why": excluded.get(r.nom_sport, []), "total": float(tot),
+                "base": float(tot / det["pen_factor"]) if det["pen_factor"] else float(tot),
+                "pen_factor": float(det["pen_factor"]), "pen_why": det["penalite"],
+                "blocks": {b: (None if blocks[b] is None else float(blocks[b])) for b in BLOCKS},
+                "struct": {b: (None if st[b] is None else float(st[b])) for b in BLOCKS},
+                "sem": {b: det["sem"].get(b) for b in BLOCKS},
+                "weights": wn, "contrib": contrib,
+                "criteria": {b: [(lab, float(sc)) for lab, sc in det[b]] for b in BLOCKS},
+                "row": r,
+            })
+        anatomy.sort(key=lambda a: (not a["retained"], a["rank"] or 999, -a["total"]))
         # classement complet (visualisation) + comparaison des méthodes
         full = pd.DataFrame([{"sport": self.df.loc[i, "nom_sport"], "sport_id": self.df.loc[i, "sport_id"],
                               "total": tot, **{b: blocks[b] for b in BLOCKS}, "retenu": bool(keep[i])}
@@ -557,7 +581,8 @@ class Recommender:
         methods = self._methods(R, texts, keep, rows); lap("explications+méthodes")
         T["total"] = sum(T.values())
         return {"resolved": R, "results": results, "excluded": excluded, "texts": texts,
-                "full": full, "methods": methods, "weights": w, "timings": T}
+                "full": full, "methods": methods, "weights": w, "timings": T,
+                "anatomy": anatomy, "n_total": len(self.df), "n_kept": int(keep.sum()), "relaxed": getattr(R, "relaxed", False)}
 
     def _methods(self, R, texts, keep, rows, k=5) -> dict:
         g = " ".join(t for t in texts.values() if t)
