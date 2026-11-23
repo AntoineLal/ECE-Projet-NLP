@@ -102,6 +102,17 @@ class UserProfile:
     minutes: int = 60
     avoid_families: list = field(default_factory=list)   # familles refusées (ajoutées par la conversation)
     intensity_shift: int = 0                             # -1 « moins intense », +1 « plus intense » (conversation)
+    # --- exclusions STRICTES (interdictions explicites : « je ne veux pas », « aucun », « uniquement »)
+    excluded_families: list = field(default_factory=list)      # familles de sports refusées
+    excluded_formats: list = field(default_factory=list)       # formats refusés (équipe, duo, groupe…)
+    excluded_categories: list = field(default_factory=list)    # tags du dataset refusés (« sport collectif », « course »…)
+    excluded_sports: list = field(default_factory=list)        # sports précis refusés
+    excluded_environments: list = field(default_factory=list)  # « intérieur » / « extérieur » refusé
+    only_solo: bool = False                                     # « uniquement individuel » : pratique seul obligatoire
+    # --- préférence SOUPLE d'environnement, issue de la conversation (favorise, n'exclut pas)
+    env_preference: str | None = None
+    # --- articulations douloureuses déclarées dans la conversation
+    injured_joints: list = field(default_factory=list)
 
 
 @dataclass
@@ -246,6 +257,7 @@ class Recommender:
         goal_zones = list(dict.fromkeys(list(p.goal_zones) + sorted(sig.goal_zones)))
 
         formats = set(p.formats) | {k.split(":")[1] for k in sig.prefs if k.startswith("format:")}
+        formats -= set(p.excluded_formats)
         disliked_formats = {k.split(":")[1] for k in sig.disliked if k.startswith("format:")}
         formats -= disliked_formats
         envs = []
@@ -254,9 +266,12 @@ class Recommender:
         env_txt = {k.split(":")[1] for k in sig.prefs if k.startswith("env:")}
         if not envs and len(env_txt) == 1:
             envs = list(env_txt)
+        if p.env_preference and p.environnement == "indifférent":
+            envs = [p.env_preference]  # préférence souple de la conversation : favorise, n'exclut pas
         families = set(p.families) | {TEXT_FAM[k] for k in sig.prefs if k in TEXT_FAM}
         dislike_fam = {TEXT_FAM[k] for k in sig.disliked if k in TEXT_FAM} | set(p.avoid_families)
         families -= dislike_fam
+        families -= set(p.excluded_families)
 
         tol = p.impact_tolerance
         if "joint_sensitive" in sig.constraints and tol != "faible":
@@ -268,8 +283,8 @@ class Recommender:
             notes.append("Refus du contact détecté dans votre texte")
         if no_water and not p.no_water:
             notes.append("Refus de l'eau détecté dans votre texte")
-        no_out = "no_outdoor" in sig.constraints or p.environnement == "intérieur"
-        no_in = "no_indoor" in sig.constraints or p.environnement == "extérieur"
+        no_out = "no_outdoor" in sig.constraints or p.environnement == "intérieur" or "extérieur" in p.excluded_environments
+        no_in = "no_indoor" in sig.constraints or p.environnement == "extérieur" or "intérieur" in p.excluded_environments
 
         target = float(np.clip(1 + 0.5 * ab["endurance"] + 0.5 * L + 0.25 * (p.motivation - 3) + p.intensity_shift, 1, 5))
         if sig.gentle:
@@ -288,7 +303,7 @@ class Recommender:
                         disliked_families=sorted(dislike_fam), disliked_formats=sorted(disliked_formats),
                         impact_tol=tol, spare_hard=sorted(set(p.spare_zones) | sig.injured_zones),
                         spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones) - sig.injured_zones),
-                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, balance_issue=sig.balance_issue, injured_joints=sorted(sig.injured_joints), no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
+                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, balance_issue=sig.balance_issue, injured_joints=sorted(set(sig.injured_joints) | set(p.injured_joints)), no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
                         no_indoor=no_in and p.environnement != "intérieur",
                         target_intensity=target, notes=notes, sources=src)
 
@@ -325,6 +340,7 @@ class Recommender:
             bad_j = [j for j in R.injured_joints if int(r[f"art_{j}"]) >= (3 if relax_injury else 2)]
             if bad_j:
                 why.append("charge forte sur une articulation douloureuse (" + ", ".join(bad_j) + ")")
+            why += self._explicit_exclusions(R.p, r)
             if R.gentle and r.impacts_1_3 >= 3:
                 why.append("impacts marqués alors que vous cherchez une pratique douce")
             if R.gentle and r.intensite_loisir_1_5 >= 4:
@@ -335,6 +351,26 @@ class Recommender:
                 keep[i] = False
                 reasons[r.nom_sport] = why
         return keep, reasons
+
+    @staticmethod
+    def _explicit_exclusions(p: UserProfile, r) -> list[str]:
+        """Exclusions strictes demandées explicitement par l'utilisateur. Aucune n'est souple."""
+        why = []
+        if p.excluded_sports and r.nom_sport in p.excluded_sports:
+            why.append("sport que vous avez exclu")
+        hit = sorted(set(p.excluded_categories) & set(r.categories_l))
+        if hit:
+            why.append("catégorie exclue : " + ", ".join(hit))
+        fam_tags = {_n(t) for f in p.excluded_families for t in FAMILIES.get(f, set())}
+        if fam_tags & set(r.categories_l):
+            why.append("famille exclue : " + ", ".join(f for f in p.excluded_families if {_n(t) for t in FAMILIES.get(f, set())} & set(r.categories_l)))
+        if p.excluded_formats and set(r.format_pratique_l) <= set(p.excluded_formats):
+            why.append("pratiqué uniquement en " + " ou ".join(r.format_pratique_l))
+        if p.only_solo and "individuel" not in r.format_pratique_l:
+            why.append("pratique seul impossible (uniquement " + " ou ".join(r.format_pratique_l) + ")")
+        if p.excluded_environments and set(r.environnement_l) <= set(p.excluded_environments):
+            why.append("uniquement en " + " ou ".join(r.environnement_l))
+        return why
 
     # ---------------- 3a. scores structurés ----------------
     def _goal_match(self, goal: str, r) -> tuple[float, str]:
@@ -552,10 +588,7 @@ class Recommender:
 
         R = self.resolve(p); lap("extraction")
         keep, excluded = self.filter_hard(R)
-        if keep.sum() < top_k and (R.injured or R.injured_joints):
-            keep, excluded = self.filter_hard(R, relax_injury=True)
-            R.relaxed = True
-            R.notes.append("Peu d'activités sans sollicitation de la zone blessée : sports très doux assouplis acceptés")
+        # Aucun assouplissement automatique : si peu de sports sont admissibles, on le signale (voir bonus_chatbot)
         lap("filtrage")
         texts = self.user_block_texts(R)
         sem, sb_raw, tf_raw = self.sem_scores(texts); lap("embeddings+cosinus")

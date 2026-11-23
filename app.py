@@ -81,6 +81,12 @@ if submitted:
     st.session_state["profile"] = UserProfile(text=text, endurance=endurance, force=force, mobilite=mobilite,
                                               motivation=motivation, experience=experience,
                                               sessions_per_week=sessions, minutes=minutes)
+    # un nouveau questionnaire remplace le profil de base : les modifications de conversation sont remises à zéro,
+    # et l'utilisateur en est averti (rien n'est perdu sans le savoir)
+    if st.session_state.get("chat"):
+        st.session_state["chat_reset_notice"] = True
+    st.session_state["base_profile"] = st.session_state["profile"]
+    st.session_state["chat"] = []
 if "profile" not in st.session_state:
     st.stop()
 profile = st.session_state["profile"]
@@ -142,7 +148,7 @@ with st.expander("🧪 Prétraitement et signaux détectés dans le texte"):
 # ---------------------------------------------------------------- top 5
 st.divider()
 st.header("🏆 Vos 5 sports recommandés")
-if st.session_state.get("profile_history"):
+if any(m.get("kind") == "maj" for m in st.session_state.get("chat", [])):
     st.caption("Classement recalculé après vos modifications dans la conversation.")
 if not results:
     st.error("Aucune activité ne satisfait toutes vos contraintes. Assouplissez-en certaines.")
@@ -173,7 +179,8 @@ for rank, res in enumerate(results, 1):
 # ---------------------------------------------------------------- conversation (bonus B)
 st.divider()
 st.header("💬 Affiner avec l'assistant")
-bonus_ui.render_profile_panel()
+if st.session_state.pop("chat_reset_notice", False):
+    st.info("Nouveau questionnaire : les modifications faites dans la conversation ont été remises à zéro.")
 bonus_ui.render_chat(out, profile, engine, weights, llm_settings)
 
 # ---------------------------------------------------------------- pourquoi ?

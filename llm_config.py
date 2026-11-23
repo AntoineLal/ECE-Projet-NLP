@@ -1,17 +1,15 @@
 """Configuration du fournisseur LLM (bonus IA).
 
 Pourquoi un module à part ?
-    Toute la configuration vient d'un seul endroit : fournisseur (Gemini, Ollama ou désactivé), modèle, limites
+    Toute la configuration vient d'un seul endroit : fournisseur (Gemini ou désactivé), modèle, limites
     d'appels. La clé API n'est JAMAIS écrite dans le code : elle est lue dans le fichier `.env` (exclu de Git)
     ou dans les secrets Streamlit (`.streamlit/secrets.toml`, lui aussi exclu de Git).
 
 Variables reconnues (voir `.env.example`) :
-    LLM_PROVIDER      gemini | ollama | off          (défaut : gemini)
+    LLM_PROVIDER      gemini | off                   (défaut : gemini)
     GEMINI_API_KEY    clé gratuite Google AI Studio  (ne jamais la committer)
-    GEMINI_MODEL      identifiant du modèle Gemini   (défaut : gemini-2.5-flash, configurable)
-    OLLAMA_URL        adresse du serveur Ollama      (défaut : http://localhost:11434)
-    OLLAMA_MODEL      modèle installé dans Ollama    (défaut : llama3.2)
-    LLM_TIMEOUT_S     délai maximal d'un appel       (défaut : 25)
+    GEMINI_MODEL      identifiant du modèle Gemini   (défaut : gemini-3.5-flash, configurable)
+    LLM_TIMEOUT_S     délai maximal d'un appel       (défaut : 60)
     LLM_MAX_CALLS     appels LLM max par session     (défaut : 15) : limite le quota consommé
     LLM_CHAT_USE_LLM  1 = le chatbot utilise le LLM pour lire les messages, 0 = règles seules (défaut : 1)
 """
@@ -29,10 +27,8 @@ ENV_FILE = ROOT / ".env"
 class LLMSettings:
     provider: str = "gemini"
     gemini_key: str = field(default="", repr=False)   # repr=False : la clé n'apparaît jamais dans les logs
-    gemini_model: str = "gemini-2.5-flash"
-    ollama_url: str = "http://localhost:11434"
-    ollama_model: str = "llama3.2"
-    timeout_s: float = 25.0
+    gemini_model: str = "gemini-3.5-flash"
+    timeout_s: float = 60.0
     max_calls_per_session: int = 15
     chat_use_llm: bool = True
 
@@ -44,8 +40,6 @@ class LLMSettings:
         """Résumé lisible, sans secret."""
         if self.provider == "gemini":
             return f"Gemini · {self.gemini_model}" + ("" if self.has_gemini_key else " (clé API absente)")
-        if self.provider == "ollama":
-            return f"Ollama local · {self.ollama_model}"
         return "désactivé"
 
 
@@ -91,16 +85,14 @@ def load_settings() -> LLMSettings:
     """Construit la configuration à partir de l'environnement (puis de .env et des secrets Streamlit)."""
     _load_dotenv_file()
     provider = os.environ.get("LLM_PROVIDER", "gemini").strip().lower()
-    if provider not in {"gemini", "ollama", "off"}:
+    if provider not in {"gemini", "off"}:
         provider = "off"
     key = os.environ.get("GEMINI_API_KEY", "") or _streamlit_secret("GEMINI_API_KEY")
     return LLMSettings(
         provider=provider,
         gemini_key=key,
-        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash",
-        ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/"),
-        ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.2").strip() or "llama3.2",
-        timeout_s=_float("LLM_TIMEOUT_S", 25.0),
+        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash",
+        timeout_s=_float("LLM_TIMEOUT_S", 60.0),
         max_calls_per_session=_int("LLM_MAX_CALLS", 15),
         chat_use_llm=os.environ.get("LLM_CHAT_USE_LLM", "1").strip() not in {"0", "false", "non"},
     )

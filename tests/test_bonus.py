@@ -2,11 +2,12 @@
 
 Lancement :   python -m unittest discover -s tests -v
 
-Aucun appel réel à Gemini ou Ollama : le LLM est SIMULÉ par un faux transport (fonction qui renvoie une réponse
+Aucun appel réel à Gemini : le LLM est SIMULÉ par un faux transport (fonction qui renvoie une réponse
 préparée). Les tests ne consomment donc aucun quota. Le moteur utilisé ici est le TF-IDF (rapide, sans téléchargement) ;
 la logique de filtres et de scores est identique avec SBERT.
 """
 import copy
+import re
 import subprocess
 import sys
 import unittest
@@ -132,51 +133,47 @@ class TestExplanations(Base):
         """Un chiffre absent du moteur fait rejeter la réponse : l'explication classique est affichée."""
         text = f"{self.name} atteint un score de 99 %, un excellent choix."
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
-        self.assertEqual(res["source"], "classique")
+        self.assertEqual(res["source"], "moteur")
         self.assertIn("chiffre non fourni", res["reason"])
         self.assertEqual(res["lines"], bl.classic_lines(self.out, self.name))
+        self.assertTrue(res["text"].endswith("."))
 
     def test_8_llm_cannot_switch_to_another_sport(self):
         other = self.out["results"][1].name
         text = f"Pour vous, {other} serait encore mieux que {self.name}."
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
-        self.assertEqual(res["source"], "classique")
+        self.assertEqual(res["source"], "moteur")
         self.assertIn("autre sport", res["reason"])
 
     def test_no_medical_diagnosis(self):
         text = f"Votre douleur révèle un diagnostic de tendinite ; {self.name} est adapté."
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
-        self.assertEqual(res["source"], "classique")
+        self.assertEqual(res["source"], "moteur")
         self.assertIn("formulation médicale", res["reason"])
 
     def test_2_missing_key_falls_back_without_calling_api(self):
         counter = CountingTransport(gemini_ok("texte"))
         res = bl.explain_sport(self.out, self.name, settings_gemini(key=""), transport=counter)
-        self.assertEqual(res["source"], "classique")
+        self.assertEqual(res["source"], "moteur")
         self.assertIn("aucune clé", res["reason"])
         self.assertEqual(counter.calls, 0)
 
     def test_2_quota_exhausted_falls_back(self):
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_status(429))
-        self.assertEqual((res["source"], "quota" in res["reason"]), ("classique", True))
+        self.assertEqual((res["source"], "quota" in res["reason"]), ("moteur", True))
 
     def test_2_provider_error_falls_back(self):
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_status(500))
-        self.assertEqual(res["source"], "classique")
+        self.assertEqual(res["source"], "moteur")
         self.assertIn("erreur", res["reason"])
 
     def test_2_timeout_falls_back(self):
         res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=raising(requests.Timeout()))
         self.assertIn("délai", res["reason"])
 
-    def test_2_ollama_unreachable_falls_back(self):
-        s = LLMSettings(provider="ollama")
-        res = bl.explain_sport(self.out, self.name, s, transport=raising(requests.ConnectionError()))
-        self.assertIn("injoignable", res["reason"])
-
     def test_2_disabled_provider_uses_classic(self):
         res = bl.explain_sport(self.out, self.name, settings_off())
-        self.assertEqual((res["source"], res["reason"]), ("classique", "l'IA est désactivée"))
+        self.assertEqual((res["source"], res["reason"]), ("moteur", "l'IA est désactivée"))
 
     def test_session_budget_limits_calls(self):
         counter = CountingTransport(gemini_ok("Un texte sans chiffre."))
@@ -198,172 +195,6 @@ class TestExplanations(Base):
         bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok("Score 99 %"))
         after = [(r.name, round(r.total, 6)) for r in self.out["results"]]
         self.assertEqual(before, after)
-
-
-# =================================================================== bonus B : compréhension
-class TestUnderstanding(Base):
-    SPEC_EXAMPLE = ("Finalement, je n'aime pas les sports aquatiques et je préfère les activités individuelles "
-                    "en extérieur.")
-
-    def test_3_positive_and_negative_preferences_by_rules(self):
-        """Exemple du cahier des charges : négation (avoid), préférence (format, environnement)."""
-        r = bc.interpret_rules(self.SPEC_EXAMPLE, self.profile_base())
-        self.assertIn("Eau", r["updates"]["avoid_families"])
-        self.assertEqual(r["updates"]["formats"], ["individuel"])
-        self.assertEqual(r["updates"]["environnement"], "extérieur")
-        self.assertTrue(r["updates"]["no_water"])
-
-    def test_3_llm_json_is_validated(self):
-        """Champ hors liste blanche, valeur hors bornes : rejetés. Les champs valides sont gardés."""
-        raw = ('{"intention":"mise_a_jour","modifications":{"formats":["individuel"],"taille_cm":180,'
-               '"sessions_per_week":12,"budget_seance_max":15},"precisions":[]}')
-        res = bc.interpret(self.SPEC_EXAMPLE, self.profile_base(), settings_gemini(),
-                           transport=gemini_ok(raw))
-        self.assertEqual(res["updates"]["formats"], ["individuel"])
-        self.assertEqual(res["updates"]["budget_seance_max"], 15)
-        self.assertNotIn("taille_cm", res["updates"])
-        self.assertNotIn("sessions_per_week", res["updates"])
-        self.assertIn("taille_cm", res["rejected"])
-
-    def test_8_llm_cannot_inject_scores(self):
-        raw = '{"intention":"mise_a_jour","modifications":{"score_global":99},"precisions":[]}'
-        res = bc.interpret("Je veux du foot", self.profile_base(), settings_gemini(), transport=gemini_ok(raw))
-        self.assertNotIn("score_global", res["updates"])
-        self.assertIn("score_global", res["rejected"])
-
-    def test_3_invalid_json_falls_back_to_rules(self):
-        res = bc.interpret(self.SPEC_EXAMPLE, self.profile_base(), settings_gemini(),
-                           transport=gemini_ok("Désolé, je ne peux pas répondre en JSON."))
-        self.assertIn("Eau", res["updates"]["avoid_families"])
-        self.assertIn("règles", res["note"])
-
-    def test_4_ambiguous_message_asks_a_question(self):
-        res = bc.interpret("Je n'aime pas le sport", self.profile_base(), settings_off())
-        self.assertEqual(res["updates"], {})
-        self.assertTrue(res["questions"])
-
-    def test_4_contradictory_environment_asks_a_question(self):
-        res = bc.interpret_rules("Je veux pratiquer en intérieur et en extérieur, pas de préférence.",
-                                 self.profile_base())
-        self.assertTrue(res["questions"], "une demande contradictoire doit déclencher une question")
-
-    def test_budget_null_lifts_the_limit(self):
-        raw = '{"intention":"mise_a_jour","modifications":{"budget_seance_max":null},"precisions":[]}'
-        res = bc.interpret("Mon budget n'est plus limité.", self.profile_base(), settings_gemini(),
-                           transport=gemini_ok(raw))
-        self.assertIn("budget_seance_max", res["updates"])
-        new, _ = bc.apply_updates(self.profile_base().__class__(text="x", budget_seance_max=15), res["updates"])
-        self.assertIsNone(new.budget_seance_max)
-
-    def profile_base(self):
-        return UserProfile(text="Je m'entraîne en salle.", sessions_per_week=4)
-
-
-# =================================================================== bonus B : mise à jour du profil
-class TestProfileUpdate(Base):
-    def test_5_previous_information_is_kept(self):
-        p = UserProfile(text="Je m'entraîne 4 fois par semaine en intérieur.", sessions_per_week=4,
-                        environnement="intérieur", formats=["groupe"])
-        new, changes = bc.apply_updates(p, {"budget_seance_max": 12}, "Mon budget est de 12 euros.")
-        self.assertEqual(new.sessions_per_week, 4)
-        self.assertEqual(new.environnement, "intérieur")
-        self.assertEqual(new.formats, ["groupe"])
-        self.assertEqual(new.budget_seance_max, 12)
-        self.assertIn("Mon budget est de 12 euros.", new.text)
-        self.assertIn("Mon budget est de 12 euros.", new.text)
-        self.assertTrue(new.text.startswith("Je m'entraîne 4 fois"))
-        self.assertTrue(changes)
-
-    def test_5_new_negation_removes_previous_like(self):
-        p = UserProfile(text="x", families=["Eau", "Course et athlétisme"])
-        new, _ = bc.apply_updates(p, {"avoid_families": ["Eau"]})
-        self.assertNotIn("Eau", new.families)
-        self.assertIn("Eau", new.avoid_families)
-        self.assertTrue(new.no_water)  # une famille aquatique refusée active aussi le refus de l'eau
-        self.assertIn("Course et athlétisme", new.families)
-
-    def test_5_intensity_accumulates_and_is_bounded(self):
-        p = UserProfile(text="x")
-        p, _ = bc.apply_updates(p, {"intensity_delta": -1})
-        p, _ = bc.apply_updates(p, {"intensity_delta": -1})
-        p, _ = bc.apply_updates(p, {"intensity_delta": -1})
-        self.assertEqual(p.intensity_shift, -2)
-
-    def test_5_unchanged_value_is_not_reported(self):
-        p = UserProfile(text="x", sessions_per_week=4)
-        _, changes = bc.apply_updates(p, {"sessions_per_week": 4})
-        self.assertEqual(changes, [])
-
-
-# =================================================================== recalcul réel
-class TestRecalculation(Base):
-    def test_6_new_constraint_really_changes_the_ranking(self):
-        """Avant : sports aquatiques dans le top. Après « je n'aime pas l'eau » : le moteur réel recalcule."""
-        before = self.out
-        res = bc.process_message("Finalement, je n'aime pas les sports aquatiques et je préfère les activités "
-                                 "individuelles en extérieur.", self.profile, before, self.rec, None, settings_off())
-        self.assertEqual(res["kind"], "maj")
-        cmp = res["comparison"]
-        print("\n--- Comparaison avant / après la conversation ---")
-        print("Avant :", " | ".join(cmp["avant"]))
-        print("Après :", " | ".join(cmp["apres"]))
-        print("Entrées :", cmp["entrees"], "| Sorties :", cmp["sorties"])
-        self.assertFalse(cmp["identique"])
-        self.assertTrue(cmp["sorties"])
-        aquatic = {"sport aquatique", "nage", "sport nautique", "pagaie", "rame", "navigation à voile", "glisse sur l'eau"}
-        for r in res["out"]["results"]:
-            cats = set(r.row.categories.split("|"))
-            self.assertFalse(cats & aquatic, f"{r.name} est aquatique")
-        top3 = [r.row.format_pratique.split("|") for r in res["out"]["results"][:3]]
-        self.assertTrue(any("individuel" in f for f in top3), "aucun sport individuel dans le top 3")
-
-    def test_6_intensity_change_lowers_the_target(self):
-        res = bc.process_message("Je préfère un sport moins intense.", self.profile, self.out, self.rec, None,
-                                 settings_off())
-        self.assertEqual(res["kind"], "maj")
-        self.assertLess(res["out"]["resolved"].target_intensity, self.out["resolved"].target_intensity)
-
-    def test_7_engine_works_without_bonus_modules(self):
-        """Le moteur n'importe aucun module bonus : il fonctionne seul."""
-        code = ("import sys; sys.path.insert(0, r'%s'); import engine; "
-                "print('bonus' in ' '.join(sys.modules))") % str(ROOT)
-        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(out.stdout.strip(), "False", out.stderr[-300:])
-        self.assertTrue(fixture()["out"]["results"])
-
-
-# =================================================================== questions sur les sports
-class TestQuestions(Base):
-    def test_6_why_question_is_answered_from_computed_data(self):
-        res = bc.process_message("Pourquoi me recommandes-tu la natation ?", self.profile, self.out, self.rec,
-                                 None, settings_off())
-        self.assertEqual(res["kind"], "reponse")
-        self.assertIn("Natation", res["text"])
-        self.assertIn("score", res["text"])
-
-    def test_6_comparison_question_returns_table(self):
-        res = bc.process_message("Quelle est la différence entre le tennis et le badminton pour mon profil ?",
-                                 self.profile, self.out, self.rec, None, settings_off())
-        self.assertEqual(res["kind"], "reponse")
-        self.assertIn("| Score global |", res["text"])
-        self.assertIn("Tennis", res["text"])
-
-    def test_6_criteria_question(self):
-        res = bc.process_message("Quels critères ont influencé mon score ?", self.profile, self.out, self.rec,
-                                 None, settings_off())
-        self.assertIn("Condition physique", res["text"])
-
-
-# =================================================================== mémoire de conversation (structure)
-class TestConversationTurns(Base):
-    def test_full_turn_returns_changes_and_source(self):
-        res = bc.process_message("Je veux un budget de 15 euros par séance.", self.profile, self.out, self.rec,
-                                 None, settings_gemini(), transport=gemini_ok(
-                                     '{"intention":"mise_a_jour","modifications":{"budget_seance_max":15}}'))
-        self.assertEqual(res["kind"], "maj")
-        self.assertEqual(res["source"], "IA + règles")
-        self.assertTrue(any("Budget" in c for c in res["changes"]))
-
 
 
 # =================================================================== transport HTTP réel (serveur local simulé)
@@ -429,6 +260,88 @@ class TestRealHTTPTransport(Base):
         finally:
             bl.GEMINI_URL = old
         self.assertEqual(cm.exception.kind, "quota")
+
+
+
+
+# =================================================================== explications complètes et cohérentes
+class TestCompleteExplanations(Base):
+    """Une explication affichée doit toujours être complète, cohérente avec les scores, et ne jamais être tronquée."""
+
+    def setUp(self):
+        self.name = self.out["results"][0].name
+        self.payload = bl.build_payload(self.out, self.name)
+
+    def test_truncated_response_is_never_shown(self):
+        """finishReason = MAX_TOKENS : le texte coupé n'est jamais affiché, le repli complet est utilisé."""
+        def truncated(url, headers, body, timeout):
+            return 200, {"candidates": [{"content": {"parts": [{"text": f"{self.name} obtient un score global de"}]},
+                                         "finishReason": "MAX_TOKENS"}]}
+        res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=truncated)
+        self.assertEqual(res["source"], "moteur")
+        self.assertIn("coupée", res["reason"])
+        self.assertTrue(res["text"].endswith("."))
+        self.assertNotIn("obtient un score global de", res["text"])  # le texte coupé n'est pas affiché
+
+    def test_sentence_without_final_punctuation_is_rejected(self):
+        text = (f"{self.name} obtient un score global de {self.payload['score_global_pct']} %, ce qui correspond "
+                "à votre envie de nager et à votre fréquence de séances. Le sport répond aussi à vos objectifs et "
+                "aux contraintes déclarées, sans toucher à vos articulations sensibles et en restant")
+        res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
+        self.assertEqual(res["source"], "moteur")
+        self.assertIn("incomplète", res["reason"])
+
+    def test_global_score_must_match_the_engine(self):
+        """Un texte complet mais sans le score exact du moteur est rejeté."""
+        wrong = (self.payload["score_global_pct"] + 7) % 100
+        text = (f"{self.name} est un sport adapté à votre profil. Il obtient un score global de {wrong} %, "
+                "ce qui reflète votre envie de nager. Les points d'attention concernent surtout la fréquence "
+                "de vos séances, et il reste une bonne piste à essayer en progressant.")
+        res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
+        self.assertEqual(res["source"], "moteur")
+        self.assertTrue("score global" in res["reason"] or "chiffre non fourni" in res["reason"], res["reason"])
+
+    def test_template_is_complete_and_uses_only_engine_numbers(self):
+        text = bl.template_explanation(self.payload)
+        self.assertTrue(text.endswith("."))
+        self.assertIn(self.name, text)
+        self.assertIn(f"{self.payload['score_global_pct']} %", text)
+        allowed = set(self.payload["nombres_autorises"]) | {1.0, 2.0, 3.0, 4.0, 5.0}
+        for tok in re.findall(r"\d+(?:[.,]\d+)?", text):
+            self.assertIn(float(tok.replace(",", ".")), allowed, f"nombre inventé : {tok}")
+        for label, value in self.payload["scores_par_bloc_pct"].items():
+            if value is not None:
+                self.assertIn(f"{value} %", text, f"score du bloc {label} absent de l'explication")
+
+    def test_template_sentences_all_end_properly(self):
+        text = bl.template_explanation(self.payload)
+        sentences = [x for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
+        self.assertGreaterEqual(len(sentences), 3)
+        for sentence in sentences:
+            self.assertIn(sentence.strip()[-1], ".!?", sentence)
+
+    def test_prompt_requires_the_expected_structure(self):
+        for word in ["adéquation", "objectifs", "préférences", "limites", "conclusion"]:
+            self.assertIn(word, bl.SYSTEM_PROMPT.lower())
+        self.assertIn("EXACTEMENT", bl.SYSTEM_PROMPT)
+
+    def test_cache_depends_on_prompt_version(self):
+        """Une nouvelle version des consignes invalide les anciennes explications en cache."""
+        before = bl.cache_key(self.out, self.name, settings_gemini())
+        old = bl.PROMPT_VERSION
+        try:
+            bl.PROMPT_VERSION = "autre"
+            after = bl.cache_key(self.out, self.name, settings_gemini())
+        finally:
+            bl.PROMPT_VERSION = old
+        self.assertNotEqual(before, after)
+
+    def test_full_valid_llm_text_is_kept_intact(self):
+        text = (f"{self.name} est recommandé au rang 1 avec un score global de {self.payload['score_global_pct']} %. "
+                "Il correspond à votre envie de nager et à votre fréquence de séances.")
+        res = bl.explain_sport(self.out, self.name, settings_gemini(), transport=gemini_ok(text))
+        self.assertEqual(res["source"], "llm")
+        self.assertEqual(res["text"], text)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # 🏃 ECE-Projet-NLP — Recommandation intelligente d'activités sportives
 
 > **Thème 7** — Recommandation d'activités sportives fondée sur l'analyse sémantique du profil physique et des objectifs personnels.
-> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 126 disciplines et
+> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 146 disciplines et
 > propose un **top 5 expliqué**, avec la possibilité de voir *pourquoi* chaque sport est recommandé ou écarté.
 >
 > ⚠️ Outil d'aide à la **découverte** d'activités. Ce n'est ni un diagnostic médical ni une prescription d'exercices.
@@ -9,7 +9,7 @@
 | | |
 |---|---|
 | **Entrée** | un texte libre + 4 échelles rapides (endurance, force, mobilité, motivation) + niveau + disponibilité |
-| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 126 sports |
+| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 146 sports |
 | **NLP** | prétraitement FR, extraction par lexiques + négation, SBERT multilingue, TF-IDF, similarité cosinus |
 | **Stack** | Python 3.12 · Streamlit · sentence-transformers · scikit-learn · NLTK · pandas · Plotly |
 
@@ -35,7 +35,7 @@ streamlit run app.py
 ```
 
 Le premier lancement télécharge le modèle SBERT (`paraphrase-multilingual-MiniLM-L12-v2`, ~470 Mo) et met en cache les
-embeddings des 126 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
+embeddings des 146 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
 
 - **Page principale** : questionnaire → top 5 → section « Pourquoi ce résultat ? » → visualisations.
 - **Bonus IA** (facultatif) : copiez `.env.example` en `.env` et renseignez votre clé Gemini gratuite. Détails dans la section 6ter.
@@ -107,7 +107,7 @@ flowchart TB
 flowchart TB
     P["Page principale"] --> S["📋 Synthèse de mon profil<br/>ce que l'application a compris"]
     P --> T["🏆 Mon top 5<br/>score + explication par sport"]
-    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 126 → compatibles → top 5"]
+    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 146 → compatibles → top 5"]
     P --> V["📊 Visualisations<br/>barres, radar, carte des affinités"]
     W --> W1["✅ Pourquoi ce sport est recommandé"]
     W --> W2["🟡 Pourquoi il n'est pas dans le top 5"]
@@ -118,7 +118,7 @@ flowchart TB
     A --> A4["✅ Tests de cohérence"]
 ```
 
-La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 126 sports :
+La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 146 sports :
 
 | Statut | Ce que l'écran montre |
 |---|---|
@@ -144,7 +144,7 @@ projet/
 ├── shared.py              # Chargement unique du modèle SBERT et du moteur (cache Streamlit)
 ├── telemetry.py           # Journalisation : runs (JSONL) + logs applicatifs
 ├── data/
-│   ├── sports.xlsx        # dataset unique : 126 sports × 40 champs (+ feuille « Guide des champs »)
+│   ├── sports.xlsx        # dataset unique : 146 sports × 40 champs (+ feuille « Guide des champs »)
 │   ├── .cache/            # embeddings SBERT mis en cache (non versionné)
 │   └── logs/              # runs.jsonl, app.log (non versionnés)
 ├── .streamlit/config.toml
@@ -172,7 +172,7 @@ flowchart TB
     EXT --> PRE
     ENG --> SB
     ENG --> TF[["TF-IDF<br/>scikit-learn"]]
-    ENG --> DATA[("data/sports.xlsx<br/>126 sports")]
+    ENG --> DATA[("data/sports.xlsx<br/>146 sports")]
 
     TEL --> RUNS[("data/logs/<br/>runs.jsonl · app.log")]
     ADM --> RUNS
@@ -205,12 +205,12 @@ sequenceDiagram
     E->>X: extract_signals(texte)
     X-->>E: objectifs, zones, préférences, contraintes, blessures, douceur, budget
     E->>E: resolve() : fusion formulaire + texte, intensité cible
-    E->>E: filter_hard() : 126 sports → sports compatibles
+    E->>E: filter_hard() : 146 sports → sports compatibles
     E->>S: embeddings des 4 textes-blocs de l'utilisateur
-    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 126 sports
+    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 146 sports
     E->>E: score structuré + sémantique par bloc, agrégation pondérée
     E->>E: garde-fous multiplicatifs, tri, top 5, explications
-    E-->>A: résultats + anatomie de la décision des 126 sports + temps par étape
+    E-->>A: résultats + anatomie de la décision des 146 sports + temps par étape
     A->>T: log_run() (runs.jsonl, app.log)
     A-->>U: top 5, synthèse, « Pourquoi ? », graphiques
 ```
@@ -229,7 +229,7 @@ flowchart LR
     RT --> UT["4 textes utilisateur<br/>(1 par bloc)"]
     UT --> EMB["SBERT : embedding"]
     UT --> STM["Stop-words + racines Snowball"] --> TFV["TF-IDF (1-2 grammes)"]
-    EMB --> COS["Similarité cosinus<br/>vs 126 textes-blocs de sports"]
+    EMB --> COS["Similarité cosinus<br/>vs 146 textes-blocs de sports"]
     TFV --> COS
     SIG --> STR["Scores structurés<br/>+ filtres + garde-fous"]
     COS --> AGG["Agrégation pondérée"]
@@ -249,7 +249,7 @@ flowchart LR
 
 ### 3.5 Modèle de données de la décision
 
-`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 126 sports** :
+`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 146 sports** :
 
 ```text
 sport_id, name
@@ -297,7 +297,7 @@ $$
 
 - $S_b$ : score **structuré** (règles, voir 4.3) ;
 - $M_b$ : score **sémantique** ; le cosinus entre le texte utilisateur du bloc et le texte-bloc de chaque sport est normalisé
-  (min-max) sur les 126 sports, car les cosinus SBERT sont tous dans une plage étroite ;
+  (min-max) sur les 146 sports, car les cosinus SBERT sont tous dans une plage étroite ;
 - si $S_b$ ou $M_b$ est absent, l'autre est utilisé seul.
 
 ### 4.3 Scores structurés $S_b$
@@ -340,8 +340,8 @@ budget, rythme (séances fréquentes + effort/impacts élevés → 0,6).
 | Articulations fragiles | impacts = 3 (fréquents) |
 | Sauts à éviter | catégorie « saut » |
 | Intérieur (ou météo) / extérieur | sport pratiqué uniquement dans l'autre environnement |
-| Articulation douloureuse | charge 3 sur l'articulation concernée, ou charge 2 (3 seulement en mode assoupli) |
-| Zone blessée | le sport sollicite cette zone *(assouplie aux sports très doux si moins de 5 sports restent, avec avertissement ⚠)* |
+| Articulation douloureuse | charge 2 ou 3 sur l'articulation concernée |
+| Zone blessée | le sport sollicite cette zone et n'est pas très doux |
 | Zone à ménager (déclarée) | zone sollicitée **et** (impacts = 3 ou force ≥ 4) |
 | Budget | coût minimal de séance > plafond |
 | Pratique douce | intensité ≥ 4 ou impacts = 3 |
@@ -356,7 +356,7 @@ Ils empêchent qu'une limitation déclarée soit « diluée » dans la moyenne d
 | Articulations fragiles + sauts | ×0,85 |
 | Impacts fréquents (tolérance moyenne) | ×0,92 |
 | Zone à ménager sollicitée | ×(1 − 0,06 par zone) |
-| Zone blessée sollicitée | ×0,8 (×0,6 en mode assoupli) |
+| Zone blessée sollicitée | ×0,8 |
 | Articulation douloureuse, charge faible / modérée | ×0,92 / ×0,6 |
 | Pratique douce + 3 articulations ou plus chargées (≥ 2) | ×0,85 |
 | Pratique douce + intensité ≥ 4 / = 3 | ×0,75 / ×0,92 |
@@ -369,7 +369,7 @@ Ils empêchent qu'une limitation déclarée soit « diluée » dans la moyenne d
 
 ### 4.6 Classement
 
-Tri par `(touche la zone blessée, −score)` : en mode assoupli, les sports qui sollicitent la zone blessée passent toujours après les autres.
+Tri par `(−score)`. Aucun assouplissement automatique : si peu de sports sont admissibles, le moteur ne réintroduit aucun sport exclu, et le chatbot indique les contraintes à reconsidérer (voir bonus B).
 
 ### 4.7 Exemple chiffré
 
@@ -396,7 +396,7 @@ et affiché dans la page Admin.
 
 ## 5. Données
 
-`data/sports.xlsx` : **126 disciplines** × 40 champs, dataset unique (voir la feuille « Guide des champs »).
+`data/sports.xlsx` : **146 disciplines** × 40 champs, dataset unique (voir la feuille « Guide des champs »).
 
 | Famille de champs | Exemples |
 |---|---|
@@ -430,7 +430,7 @@ Page **Admin** (menu latéral) :
 | 🎛️ Labo de sensibilité | variation des poids et mouvement du classement (▲ ▼ 🆕) |
 | ✅ Tests | **19 scénarios de cohérence** (contact, genou douloureux, pratique seul, genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
 | 🧠 Modèles NLP | comparaison des 4 modèles (scénarios, précision, robustesse, latence, accord), historique des benchmarks, détail par intention, runs de production par modèle |
-| 🧬 Dataset | statistiques et exploration des 126 sports |
+| 🧬 Dataset | statistiques et exploration des 146 sports |
 
 Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/app.log` (non versionnés).
 
@@ -491,24 +491,60 @@ La réponse est **vérifiée** avant affichage (`bonus_llm.validate_text`) :
 Si l'IA est absente, si le quota est épuisé, si le fournisseur est en erreur ou si la réponse est rejetée, l'application
 affiche **l'explication classique déjà produite par le moteur**, avec la raison du repli.
 
-### Bonus B : assistant conversationnel qui affine le profil
+### Bonus B : chatbot adaptatif qui relance le moteur NLP
 
-Sous le premier classement, une conversation (`st.chat_message` et `st.chat_input`) permet de modifier le profil ou de
-poser des questions. Le déroulé :
+Le chatbot ne remplace ni SBERT, ni TF-IDF, ni le scoring : il **modifie le profil**, puis **relance le moteur existant**.
+Le chemin d'un message est le suivant.
 
-1. **Lecture du message** : par règles (`extraction.py`, avec gestion des négations) et, si configuré, par le LLM qui
-   renvoie un objet JSON. Les deux résultats sont fusionnés, le LLM ayant la priorité sur les valeurs qu'il fournit.
-2. **Validation** (`bonus_chatbot.validate_updates`) : seuls les champs de `UserProfile` sont acceptés, avec leurs bornes.
-   Un champ inconnu (« taille », « score ») ou une valeur hors bornes est rejeté et signalé.
-3. **Fusion** (`apply_updates`) : ce qui n'est pas mentionné est conservé. Une nouvelle négation retire une préférence
-   antérieure. Le message est ajouté au texte du profil pour que l'analyse NLP le prenne en compte.
-4. **Recalcul** : `engine.recommend` est relancé avec le profil mis à jour. Aucun classement n'est produit par le LLM.
-5. **Explication du changement** (`compare_rankings`, `describe_change`) : entrées et sorties du top 3, mouvements de rang.
-6. **Questions** (`answer_question`) : « pourquoi X ? », « différence entre X et Y ? », « quels critères ? » reçoivent une
-   réponse fondée sur les résultats calculés (tableau comparatif, critères forts et faibles).
+```
+message → lecture (règles + Gemini en JSON strict) → contrat validé → fusion dans le profil
+        → engine.recommend (filtres stricts AVANT le classement, puis scores SBERT/TF-IDF) → comparaison avant / après
+```
 
-Les modifications apparaissent dans le panneau « 🧩 Ajouté pendant la conversation », et un bouton permet d'annuler la
-dernière modification.
+**1. Lecture.** Un *contrat* aux champs fixes décrit le message : objectifs ajoutés, préférences souples, exclusions
+strictes, acceptations (levées d'exclusion), contraintes physiques, budget, séances, durée, niveau, intensité, corrections.
+Les règles (`rules_contract`) lisent toujours le message. Gemini (`llm_contract`) renvoie le même contrat en JSON. Les deux
+sont fusionnés. Si Gemini est indisponible, les règles suffisent.
+
+**2. Validation stricte** (`validate_contract`). Une clé inconnue (`score_global`…), une valeur hors liste (un sport qui
+n'existe pas, une famille inventée) ou hors bornes (15 séances par semaine) est **rejetée et signalée** : elle n'atteint
+jamais le profil. Les listes de sports et de catégories viennent du dataset lui-même.
+
+**3. Distinction essentielle.**
+
+| Type | Exemples | Effet dans le moteur |
+|---|---|---|
+| Exclusion **stricte** | « je ne veux aucun sport aquatique », « uniquement individuels », « sans course à pied » | filtre dur : le sport n'est jamais classé |
+| Préférence **souple** | « je préfère l'extérieur », « j'aime les sports de ballon » | critère de score : favorise, n'exclut pas |
+| Acceptation | « finalement j'accepte les sports collectifs » | lève l'exclusion correspondante |
+| Correction | « finalement intérieur » après « extérieur » | remplace l'ancienne valeur, signalée comme contradiction résolue |
+
+**4. Fusion sans effacement** (`apply_contract`). Ce qui n'est pas mentionné est conservé. Une exclusion retire la
+préférence opposée, et une acceptation lève l'exclusion. Le message n'est plus ajouté au texte du profil : les anciennes
+phrases ne peuvent donc plus contredire une modification récente.
+
+**5. Recalcul.** Si le profil change, `engine.recommend` est relancé. Si le message ne change aucun critère, aucun recalcul
+n'a lieu (`sans_changement`).
+
+**6. Aucun sport admissible.** Le moteur ne relâche jamais une contrainte. `diagnose_empty` indique seulement ce qui
+redonnerait des sports admissibles (« exclusion de la catégorie course : 7 sport(s) redeviendraient admissibles »), et
+l'utilisateur décide.
+
+**7. Interface.** Après chaque modification, la conversation affiche : le profil actualisé (objectifs retenus, préférences
+souples, contraintes strictes), les changements depuis la dernière réponse, les contradictions résolues, puis le nouveau
+top 3 avec score global, critères de correspondance, et les raisons de l'entrée ou de la sortie de chaque sport. Le bouton
+« Réinitialiser les modifications de la conversation » revient au profil du questionnaire, sans l'effacer. Un nouvel envoi
+du questionnaire remet la conversation à zéro, en l'annonçant.
+
+**Démonstration avant / après** (test `test_before_after_demonstration`, moteur TF-IDF, profil « je m'entraîne en salle ») :
+
+- Message : « Je ne veux aucun sport aquatique, je veux uniquement des sports individuels et je préfère l'extérieur. »
+- Avant : Kickboxing · Triathlon · Aïkido · Escalade de bloc · Street workout
+- Après : Street workout · Lancer du poids · Cyclisme sur piste · Lancer du javelot · Ski alpin
+- Sorties : Kickboxing, Triathlon, Aïkido (exclus ou rétrogradés par les nouvelles exclusions)
+
+Le moteur NLP a fonctionné sans modification de son calcul : seuls des champs d'exclusion ont été ajoutés, et l'assouplissement
+automatique des blessures a été supprimé (il réintroduisait silencieusement des sports exclus).
 
 ### Pourquoi le LLM ne remplace pas les calculs
 
@@ -521,7 +557,6 @@ un classement. Ici, les scores (SBERT, TF-IDF, règles, garde-fous) sont calcul�
 | Besoin | Choix | Justification |
 |---|---|---|
 | Modèle de langage gratuit | **Google Gemini API** (niveau gratuit), modèle configurable (`GEMINI_MODEL`) | gratuit sans abonnement pour un usage de cours ; le nom du modèle peut évoluer, d'où la configuration |
-| Alternative locale | **Ollama** (`LLM_PROVIDER=ollama`) | aucune clé, aucune donnée envoyée à l'extérieur |
 | Appels HTTP | `requests` | bibliothèque standard et légère, pas de SDK à installer |
 | Secrets | `.env` (python-dotenv) ou `st.secrets` | la clé n'est jamais dans le code ni dans Git (`.env` et `.streamlit/secrets.toml` sont exclus) |
 | Tests | `unittest` (bibliothèque standard) | aucune dépendance supplémentaire |
@@ -544,8 +579,7 @@ Flux du bonus B : message → `interpret` (règles, puis LLM validé) → `apply
 
 1. Créez une clé gratuite sur Google AI Studio.
 2. Copiez `.env.example` en `.env` à la racine du projet, puis renseignez `GEMINI_API_KEY=` avec **votre** clé.
-3. Vérifiez que `GEMINI_MODEL` correspond à un modèle disponible pour votre compte (valeur par défaut : `gemini-2.5-flash`).
-4. Pour une alternative sans clé : installez Ollama, exécutez `ollama pull llama3.2`, puis mettez `LLM_PROVIDER=ollama` dans `.env`.
+3. Vérifiez que `GEMINI_MODEL` correspond à un modèle disponible pour votre compte (valeur par défaut : `gemini-3.5-flash`). Les modèles changent : Google a retiré `gemini-2.5-flash` pour les nouveaux utilisateurs, et un modèle surchargé peut répondre en erreur 503 ; l'application réessaie une fois, puis affiche l'explication classique.
 
 Sans clé, l'application fonctionne : les boutons affichent l'explication classique, et la conversation utilise les règles.
 
@@ -566,10 +600,16 @@ python -m unittest discover -s tests -v
 Les tests utilisent un LLM **simulé** (faux transport) et un serveur HTTP local qui imite l'API Gemini : aucun quota n'est
 consommé. Ils s'exécutent avec le moteur TF-IDF, dont les règles de filtrage et de score sont identiques à celles de SBERT.
 
-**Résultat de la dernière exécution** : 37 tests, tous réussis. Ils couvrent la génération à partir des vrais scores,
-l'absence de clé et les erreurs du fournisseur (quota, erreur, délai, serveur local injoignable), l'extraction des
-préférences positives et négatives, les demandes ambiguës, la conservation du profil, le recalcul réel, le fonctionnement
-sans bonus, l'absence d'invention de scores ou de sports par le LLM, et la clé absente de l'URL.
+**Résultat de la dernière exécution** : **46 tests, tous réussis**. Le fichier `tests/test_bonus.py` couvre le bonus A
+et le transport HTTP ; le fichier `tests/test_chatbot.py` couvre le bonus B. Pour le bonus B, les 8 scénarios obligatoires
+sont testés avec un Gemini simulé : (1) aucun sport aquatique, (2) uniquement des sports individuels, (3) préférence
+d'extérieur souple, (4) impacts élevés filtrés, (5) acceptation des collectifs qui lève l'exclusion, (6) endurance sans
+course à pied, (7) messages successifs qui conservent les contraintes précédentes, (8) aucun sport admissible : message
+explicatif, rien n'est relâché. S'y ajoutent la correction d'une préférence, le message sans critère (aucun recalcul), la
+réinitialisation, et le refus des valeurs inventées. Le moteur sans bonus est aussi testé.
+
+**Vérifications complémentaires** : les 19 scénarios de contraintes du moteur NLP passent toujours (SBERT). Un appel réel à
+Gemini a été fait avec la clé du projet : le JSON reçu respecte le schéma et n'a été rejeté par aucun contrôle.
 
 **Comparaison avant / après une conversation** (test `test_6_new_constraint_really_changes_the_ranking`, moteur TF-IDF,
 profil « je veux nager… », message « je n'aime pas les sports aquatiques et je préfère les activités individuelles en
@@ -589,9 +629,9 @@ requête est vérifié contre un serveur simulé ; la première vraie exécution
 
 - Bonus IA : aucun appel réel à Gemini n'a été effectué pendant le développement (tests simulés). Les extractions du chatbot restent des lexiques : une formulation inhabituelle peut passer inaperçue, la conversation pose alors une question.
 
-- Jeu de données restreint : 126 sports ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
+- Jeu de données restreint : 146 sports ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
 - L'extraction est à base de lexiques : une tournure inhabituelle peut ne pas être détectée (la synthèse du profil montre toujours ce qui a été compris).
-- Les scores sont relatifs à un jeu de 126 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
+- Les scores sont relatifs à un jeu de 146 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
 - Annotations non validées médicalement.
 
 **Extensions envisagées** (le moteur fonctionne indépendamment) : chatbot d'affinage, explications par LLM, RAG sur une base documentaire,

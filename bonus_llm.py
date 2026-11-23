@@ -9,7 +9,7 @@ Le LLM ne calcule RIEN. Le moteur NLP calcule les scores ; ce module :
     4. si l'IA est indisponible ou si la réponse est rejetée, affiche l'explication classique déjà produite par
        l'application (les « bullets » de `engine.py`). L'application fonctionne donc sans IA.
 
-Fournisseurs supportés (configurés dans `llm_config.py`) : Google Gemini (niveau gratuit) et Ollama (local).
+Fournisseur supporté (configuré dans `llm_config.py`) : Google Gemini (niveau gratuit).
 """
 from __future__ import annotations
 
@@ -38,9 +38,9 @@ USER_MESSAGES = {
     "provider": "le fournisseur a renvoyé une erreur",
     "model_missing": "le modèle configuré n'est pas disponible chez le fournisseur",
     "timeout": "le délai de réponse a été dépassé",
-    "unreachable": "le serveur local (Ollama) est injoignable",
     "disabled": "l'IA est désactivée",
     "budget": "le nombre d'appels autorisés pour cette session est atteint",
+    "truncated": "la réponse de l'IA a été coupée avant la fin",
 }
 
 
@@ -63,6 +63,20 @@ def _http_post(url: str, headers: dict, body: dict, timeout: float) -> tuple[int
     return r.status_code, data
 
 
+def _send_with_retry(send, url, headers, body, timeout):
+    """Un seul nouvel essai si le service est surchargé (503), avec une courte pause. Les autres erreurs ne sont pas relancées."""
+    for attempt in (1, 2):
+        try:
+            status, data = send(url, headers, body, timeout)
+        except requests.Timeout as e:
+            raise LLMError("timeout", str(type(e).__name__)) from e
+        except requests.RequestException as e:
+            raise LLMError("provider", type(e).__name__) from e
+        if status != 503 or attempt == 2:
+            return status, data
+        time.sleep(2)
+
+
 def call_llm(system: str, user: str, settings: LLMSettings, *, json_mode: bool = False,
              transport: Transport | None = None) -> str:
     """Envoie une requête au fournisseur configuré et renvoie le texte de la réponse.
@@ -79,18 +93,18 @@ def call_llm(system: str, user: str, settings: LLMSettings, *, json_mode: bool =
             raise LLMError("no_key")
         url = GEMINI_URL.format(model=settings.gemini_model)
         headers = {"Content-Type": "application/json", "x-goog-api-key": settings.gemini_key}
-        gen = {"temperature": 0.2, "maxOutputTokens": 600}
+        # Les modèles Gemini 3 consomment des tokens de « réflexion » sur le même budget que la réponse :
+        # 600 tokens coupaient le texte (finishReason MAX_TOKENS). On donne donc plus de place et une réflexion légère.
+        # marge confortable : la réflexion interne (≈ 1 000 tokens) et le texte partagent ce budget
+        gen = {"temperature": 0.2, "maxOutputTokens": 4096}
+        if settings.gemini_model.startswith("gemini-3"):
+            gen["thinkingConfig"] = {"thinkingLevel": "low"}
         if json_mode:
             gen["responseMimeType"] = "application/json"
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": user}]}],
                 "generationConfig": gen}
-        try:
-            status, data = send(url, headers, body, settings.timeout_s)
-        except requests.Timeout as e:
-            raise LLMError("timeout", str(type(e).__name__)) from e
-        except requests.RequestException as e:
-            raise LLMError("provider", type(e).__name__) from e
+        status, data = _send_with_retry(send, url, headers, body, settings.timeout_s)
         if status == 429:
             raise LLMError("quota", f"HTTP {status}")
         if status == 404:
@@ -98,33 +112,18 @@ def call_llm(system: str, user: str, settings: LLMSettings, *, json_mode: bool =
         if status >= 400:
             raise LLMError("provider", f"HTTP {status}")  # 400/401/403 : clé ou requête refusée
         try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            candidate = data["candidates"][0]
+            text = candidate["content"]["parts"][0]["text"]
         except (KeyError, IndexError, TypeError) as e:
             raise LLMError("provider", "réponse sans texte (filtrée ou vide)") from e
+        # finishReason indique POURQUOI la génération s'est arrêtée. STOP = fin normale.
+        # MAX_TOKENS = limite atteinte : le texte est coupé, il ne doit jamais être affiché.
+        reason = candidate.get("finishReason", "STOP")
+        if reason == "MAX_TOKENS":
+            raise LLMError("truncated", f"finishReason={reason}, {len(text)} caractères")
+        if reason != "STOP":
+            raise LLMError("provider", f"finishReason={reason}")
 
-    elif settings.provider == "ollama":
-        url = f"{settings.ollama_url}/api/chat"
-        body = {"model": settings.ollama_model, "stream": False,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "options": {"temperature": 0.2}}
-        if json_mode:
-            body["format"] = "json"
-        try:
-            status, data = send(url, {"Content-Type": "application/json"}, body, settings.timeout_s)
-        except requests.Timeout as e:
-            raise LLMError("timeout", str(type(e).__name__)) from e
-        except requests.ConnectionError as e:
-            raise LLMError("unreachable", str(type(e).__name__)) from e
-        except requests.RequestException as e:
-            raise LLMError("provider", type(e).__name__) from e
-        if status == 404:
-            raise LLMError("model_missing", f"HTTP {status}")
-        if status >= 400:
-            raise LLMError("provider", f"HTTP {status}")
-        try:
-            text = data["message"]["content"]
-        except (KeyError, TypeError) as e:
-            raise LLMError("provider", "réponse Ollama inattendue") from e
     else:
         raise LLMError("disabled")
 
@@ -226,14 +225,24 @@ def build_payload(out: dict, sport_name: str) -> dict:
 
 
 # ------------------------------------------------------------------ consignes et vérification
-SYSTEM_PROMPT = """Tu expliques à un utilisateur non technique pourquoi un sport lui est recommandé.
+PROMPT_VERSION = "v2"  # changer cette valeur invalide le cache des anciennes explications
+
+SYSTEM_PROMPT = """Tu rédiges, en français, une explication personnalisée d'une recommandation sportive, pour un utilisateur non technique.
+
 Règles strictes :
-1. Tu n'inventes RIEN : chiffres, scores, caractéristiques ou sports absents des données fournies.
-2. Tu n'es pas médecin : aucun diagnostic, aucune prescription d'exercices. En cas de douleur, invite à consulter un professionnel de santé.
-3. Tu ne modifies pas la recommandation : tu ne cites aucun autre sport que celui fourni.
-4. Tu écris en français, en 4 à 6 phrases au maximum, sans jargon (pas de « bloc », « pondération », « similarité »).
-5. Structure : pourquoi ce sport correspond au profil ; puis les points d'attention ou limites ; éventuellement un conseil prudent.
-6. N'emploie que les nombres présents dans les données."""
+1. Tu n'inventes RIEN : chiffres, scores, caractéristiques ou sports absents des données JSON fournies.
+2. Tu reprends EXACTEMENT le score global et les scores par bloc donnés, sans les arrondir ni les modifier.
+3. Tu n'es pas médecin : aucun diagnostic, aucune prescription d'exercices. En cas de douleur, conseille de consulter un professionnel de santé.
+4. Tu ne cites aucun autre sport que celui fourni, et tu n'emploies pas de jargon (ni « bloc », « pondération », « similarité », « score structuré »).
+
+Structure attendue, en 5 à 8 phrases complètes :
+a) Pourquoi ce sport correspond à votre profil : adéquation avec les capacités physiques déclarées (endurance, force, mobilité, niveau).
+b) Comment il répond à vos objectifs déclarés (objectifs et zones à renforcer).
+c) Comment il respecte vos préférences (formats, environnement, types d'activités appréciés).
+d) Les limites ou points d'attention (critères faibles, garde-fous, contraintes), sans rien inventer.
+e) Une conclusion pertinente, qui résume la recommandation en une phrase.
+
+Termine toujours par une phrase complète qui se termine par un point.""" + ""
 
 
 def build_user_message(payload: dict) -> str:
@@ -244,11 +253,13 @@ FORBIDDEN_PATTERNS = [r"diagnostic", r"diagnostiqu", r"vous souffrez", r"vous et
 
 
 def validate_text(text: str, payload: dict, all_sport_names: list[str]) -> tuple[bool, str]:
-    """Vérifie la réponse du LLM. Retourne (ok, motif de rejet)."""
+    """Vérifie la réponse du LLM. Retourne (ok, motif de rejet).
+
+    Ordre des contrôles : d'abord la sécurité et l'exactitude (médical, autres sports, chiffres, score),
+    puis la forme (longueur, phrase complète).
+    """
     if not text or not text.strip():
         return False, "réponse vide"
-    if len(text) > 1200:
-        return False, "réponse trop longue"
     folded = fold(text)
     for pat in FORBIDDEN_PATTERNS:
         if re.search(pat, folded):
@@ -258,10 +269,61 @@ def validate_text(text: str, payload: dict, all_sport_names: list[str]) -> tuple
         if name != own and len(name) >= 6 and fold(name) in folded:
             return False, f"mentionne un autre sport ({name})"
     allowed = set(payload["nombres_autorises"]) | {1.0, 2.0, 3.0, 4.0, 5.0}
+    found = set()
     for tok in re.findall(r"\d+(?:[.,]\d+)?", text):
-        if float(tok.replace(",", ".")) not in allowed:
+        value = float(tok.replace(",", "."))
+        if value not in allowed:
             return False, f"chiffre non fourni par le moteur ({tok})"
+        found.add(value)
+    # cohérence : le score global du moteur doit apparaître tel quel dans l'explication
+    if float(payload["score_global_pct"]) not in found:
+        return False, "score global absent ou différent de celui du moteur"
+    if len(text) > 1500:
+        return False, "réponse trop longue"
+    if len(text.strip()) < 120:
+        return False, "réponse trop courte"
+    if text.strip()[-1] not in ".!?»)":
+        return False, "phrase incomplète (texte coupé)"
     return True, ""
+
+
+def template_explanation(payload: dict) -> str:
+    """Explication complète construite UNIQUEMENT à partir des résultats du moteur (sans IA).
+
+    Utilisée quand l'IA est indisponible ou quand sa réponse est tronquée ou rejetée. Chaque phrase est complète,
+    et tous les chiffres viennent du dossier calculé par le moteur.
+    """
+    s, p = payload["sport"], payload["profil"]
+    b = payload["scores_par_bloc_pct"]
+    score = payload["score_global_pct"]
+    rank = payload["rang_recommandation"]
+    adjective = ("très pertinente" if score >= 70 else "pertinente" if score >= 50 else "à envisager avec prudence")
+    out = [f"{s['nom']} est recommandé au rang {rank} avec un score global de {score} %, ce qui le rend {adjective} pour votre profil."]
+    forts = [c["critere"].split(" : ", 1)[-1] for c in payload["criteres_forts"][:2]]
+    if forts:
+        out.append(f"Il s'appuie sur des points forts pour vous : {' et '.join(forts)}.")
+    if b.get("Condition physique") is not None:
+        out.append(f"Sur le plan physique, son adéquation avec votre niveau « {p['niveau']} » est évaluée à {b['Condition physique']} %.")
+    objectifs = p.get("objectifs", []) + [f"zone {z}" for z in p.get("zones_a_renforcer", [])]
+    if objectifs and b.get("Objectifs") is not None:
+        out.append(f"Il répond à vos objectifs ({', '.join(objectifs)}) à hauteur de {b['Objectifs']} %.")
+    prefs = []
+    if p.get("formats_souhaites"):
+        prefs.append("format " + " ou ".join(p["formats_souhaites"]))
+    if p.get("environnement_souhaite"):
+        prefs.append("environnement " + " ou ".join(p["environnement_souhaite"]))
+    if prefs and b.get("Préférences") is not None:
+        out.append(f"Il correspond à vos préférences ({', '.join(prefs)}) : {b['Préférences']} %.")
+    if b.get("Contraintes") is not None:
+        out.append(f"Vos contraintes déclarées sont prises en compte à {b['Contraintes']} %.")
+    limites = [c["critere"].split(" : ", 1)[-1] for c in payload["criteres_faibles"][:2]] + payload["garde_fous_appliques"]
+    if limites:
+        out.append(f"Points d'attention : {' ; '.join(limites)}.")
+    contraintes = payload.get("contraintes_verifiees", [])
+    if contraintes:
+        out.append(f"Les contraintes déclarées sont vérifiées : {' '.join(c.rstrip('.') + '.' for c in contraintes[:2])}")
+    out.append("En résumé, il s'agit d'une piste à essayer en progressant, et en cas de douleur, consultez un professionnel de santé.")
+    return " ".join(sentence.rstrip() for sentence in out)
 
 
 # ------------------------------------------------------------------ budget d'appels et repli
@@ -288,17 +350,21 @@ def classic_lines(out: dict, sport_name: str) -> list[dict]:
 
 def explain_sport(out: dict, sport_name: str, settings: LLMSettings, *, budget: CallBudget | None = None,
                   transport: Transport | None = None) -> dict:
-    """Produit l'explication d'un sport recommandé.
+    """Produit l'explication complète d'un sport recommandé.
 
-    Retourne {"source": "llm" | "classique", "text": str | None, "reason": str, "payload": dict, "lines": list}.
-    `source == "classique"` signifie que l'IA n'a pas été utilisée : l'appelant affiche alors `lines`.
+    Retourne toujours un texte complet :
+      - source "llm"    : texte rédigé par Gemini, vérifié (fin de phrase, score exact, chiffres autorisés) ;
+      - source "moteur" : explication construite à partir des résultats NLP (IA absente, quota, erreur, texte
+                          tronqué ou rejeté). `reason` indique pourquoi l'IA n'a pas été utilisée.
+    `lines` contient en plus les puces classiques du moteur.
     """
     payload = build_payload(out, sport_name)
     lines = classic_lines(out, sport_name)
+    template = template_explanation(payload)
 
     def fallback(kind_or_msg: str) -> dict:
         msg = USER_MESSAGES.get(kind_or_msg, kind_or_msg)
-        return {"source": "classique", "text": None, "reason": msg, "payload": payload, "lines": lines}
+        return {"source": "moteur", "text": template, "reason": msg, "payload": payload, "lines": lines}
 
     if settings.provider == "off":
         return fallback("disabled")
@@ -323,4 +389,5 @@ def explain_sport(out: dict, sport_name: str, settings: LLMSettings, *, budget: 
 def cache_key(out: dict, sport_name: str, settings: LLMSettings) -> str:
     """Clé de cache : une même recommandation n'est expliquée qu'une fois (économie de quota)."""
     p = build_payload(out, sport_name)
-    return hashlib.sha1((settings.describe() + json.dumps(p, sort_keys=True)).encode("utf-8")).hexdigest()
+    raw = PROMPT_VERSION + "|" + settings.describe() + "|" + json.dumps(p, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
