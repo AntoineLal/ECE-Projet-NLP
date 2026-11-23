@@ -14,7 +14,9 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from engine import BLOCK_LABELS, BLOCKS, DEFAULT_WEIGHTS, WATER_TAGS, UserProfile  # noqa: E402
-from shared import get_engine  # noqa: E402
+from shared import MODELS, get_engine, model_label, normalize_model_key  # noqa: E402
+from benchmark import read_benchmarks, run_benchmark  # noqa: E402
+from gold import GOLD, PARAPHRASES  # noqa: E402
 from telemetry import APP_LOG, RUNS, get_logger, read_runs  # noqa: E402
 
 st.set_page_config(page_title="Admin · Centre de contrôle", page_icon="🛰️", layout="wide")
@@ -49,7 +51,7 @@ if sbert_error:
     st.error("SBERT indisponible : " + sbert_error[:200])
 
 tabs = st.tabs(["📡 Vue d'ensemble", "⏱️ Runtime", "🗂️ Historique & replay", "📜 Logs", "🗺️ Carte des sports",
-                "🎛️ Labo de sensibilité", "✅ Tests", "🧬 Dataset"])
+                "🎛️ Labo de sensibilité", "✅ Tests", "🧬 Dataset", "🧠 Modèles NLP"])
 
 
 def need_runs():
@@ -133,11 +135,16 @@ with tabs[1]:
 # ================================================================ 3. historique & replay
 with tabs[2]:
     if not need_runs():
-        tbl = pd.DataFrame([{"id": r["id"], "date": datetime.fromtimestamp(r["ts"]).strftime("%d/%m %H:%M:%S"),
+        mods_present = sorted({normalize_model_key(r.get("engine")) for r in runs})
+        mod = st.selectbox("Modèle", ["Tous"] + mods_present,
+                           format_func=lambda k: "Tous" if k == "Tous" else model_label(k), key="hist_model")
+        runs_v = [r for r in runs if mod == "Tous" or normalize_model_key(r.get("engine")) == mod]
+        tbl = pd.DataFrame([{"id": r["id"], "modèle": model_label(normalize_model_key(r.get("engine"))),
+                             "date": datetime.fromtimestamp(r["ts"]).strftime("%d/%m %H:%M:%S"),
                              "texte": r["text"][:70], "n°1": r["top"][0]["name"] if r["top"] else "—",
-                             "exclus": r["n_excluded"], "ms": r["timings_ms"]["total"]} for r in reversed(runs)])
+                             "exclus": r["n_excluded"], "ms": r["timings_ms"]["total"]} for r in reversed(runs_v)])
         st.dataframe(tbl, use_container_width=True, hide_index=True, height=220)
-        sel = st.selectbox("Inspecter un run", list(reversed(runs)), format_func=run_label)
+        sel = st.selectbox("Inspecter un run", list(reversed(runs_v)), format_func=run_label)
         c1, c2 = st.columns([3, 2])
         with c1:
             st.markdown("**Texte analysé**")
@@ -232,66 +239,8 @@ with tabs[5]:
         st.caption("Si le top 5 bouge beaucoup avec de petits changements de poids, la recommandation est fragile.")
 
 # ================================================================ 7. tests
-def _top(o, df):
-    """Lignes du jeu de données correspondant au top 5 retourné."""
-    return df[df.nom_sport.isin([r.name for r in o["results"]])]
+from personas import PERSONAS  # noqa: E402  (scénarios partagés)
 
-
-PERSONAS = [
-    ("Genou fragile : pas de sauts ni d'impacts fréquents",
-     "J'ai mal au genou, je dois éviter les sauts et les chocs. Je veux me détendre et travailler mon équilibre.",
-     lambda o, df: all(df.loc[df.nom_sport == r.name, "impacts_1_3"].iloc[0] < 3 and "saut" not in df.loc[df.nom_sport == r.name, "categories_l"].iloc[0] for r in o["results"])),
-    ("Ne sait pas nager : aucun sport aquatique",
-     "Je ne sais pas nager. Je veux améliorer mon endurance, plutôt en extérieur.",
-     lambda o, df: not any(set(df.loc[df.nom_sport == r.name, "categories_l"].iloc[0]) & WATER_TAGS for r in o["results"])),
-    ("Pas de contact : aucun contact réglementé",
-     "Je ne veux surtout pas de sport de contact, je cherche à développer ma force et mon cardio.",
-     lambda o, df: all(df.loc[df.nom_sport == r.name, "contact"].iloc[0] != "réglementé" for r in o["results"])),
-    ("Budget 10 € : respecte le plafond",
-     "Mon budget est de 10 euros par séance maximum. Je veux me remettre à l'endurance.",
-     lambda o, df: all(df.loc[df.nom_sport == r.name, "budget_seance_min_eur"].iloc[0] <= 10 for r in o["results"])),
-    ("Exemple de l'énoncé : un sport doux d'endurance dans le top 5",
-     "Je suis débutant en sport, je me fatigue rapidement lorsque je cours, mais je peux marcher assez longtemps. "
-     "Je souhaite améliorer mon endurance, renforcer mon dos et pratiquer une activité qui ne sollicite pas trop mes articulations. "
-     "Je préfère les activités individuelles et je suis disponible trois fois par semaine.",
-     lambda o, df: bool(((_top(o, df).endurance_1_5 >= 4) & (_top(o, df).impacts_1_3 == 1)).any())),
-    ("Passionné de combat : au moins 3 sports de combat",
-     "Je suis confirmé, j'adore les sports de combat et la boxe, je veux de l'intensité et progresser techniquement.",
-     lambda o, df: sum(bool({"sport de combat", "combat de percussion", "combat de préhension"} & set(df.loc[df.nom_sport == r.name, "categories_l"].iloc[0])) for r in o["results"]) >= 3),
-    ("Amateur d'équipe : au moins 3 sports collectifs",
-     "J'aime les sports collectifs, jouer en équipe avec des amis, courir et me défouler.",
-     lambda o, df: sum("sport collectif" in df.loc[df.nom_sport == r.name, "categories_l"].iloc[0] for r in o["results"]) >= 3),
-    ("Épaule blessée, tennis pratiqué : doux, intérieur, sans épaule ni raquette",
-     "Je pratique la salle de sport et le tennis mais je me suis blessé à l'épaule donc j'aimerais trouver un sport plus calme et plus doux qui pourrait me soulager l'épaule pendant ma réhabilitation. Je préfère un sport d'intérieur qui ne pose pas de problème avec la météo.",
-     lambda o, df: all("sport de raquette" not in df.loc[df.nom_sport == r.name, "categories_l"].iloc[0]
-                       and df.loc[df.nom_sport == r.name, "intensite_loisir_1_5"].iloc[0] <= 3
-                       and "intérieur" in df.loc[df.nom_sport == r.name, "environnement_l"].iloc[0] for r in o["results"])
-                  and sum("épaules" in df.loc[df.nom_sport == r.name, "zones_corps_sollicitees_l"].iloc[0] for r in o["results"]) <= 1),
-    ("Tendinite au coude : pas de raquette, pas d'avant-bras sollicité",
-     "J'ai une tendinite au coude, j'ai mal à l'avant-bras. Je veux garder la forme et travailler mon endurance en douceur.",
-     lambda o, df: all("avant-bras" not in df.loc[df.nom_sport == r.name, "zones_corps_sollicitees_l"].iloc[0] for r in o["results"])),
-    ("Vertiges : au plus un sport très exigeant en équilibre dans le top 5",
-     "J'ai des vertiges et je manque d'équilibre quand je marche. Je veux bouger en douceur et me détendre.",
-     lambda o, df: int((_top(o, df).equilibre_1_5 >= 4).sum()) <= 1),
-    ("Détente et souplesse : au moins 2 pratiques de mobilité ou de bien-être",
-     "Je suis débutant, je veux me détendre et gagner en souplesse. Je préfère pratiquer en intérieur, plutôt seul.",
-     lambda o, df: int(_top(o, df).categories_l.apply(lambda c: bool({"mobilité", "relaxation"} & set(c))).sum()) >= 2),
-    ("Salle et force : au moins 2 sports de salle orientés force",
-     "Je m'entraîne en salle de sport depuis plusieurs années. Je veux prendre de la force et de la puissance, je m'entraîne seul.",
-     lambda o, df: int(_top(o, df).apply(lambda r: "sport en salle" in r.categories_l and r.force_1_5 >= 4, axis=1).sum()) >= 2),
-    ("Dos en douceur : au moins 2 sports qui travaillent le dos",
-     "Je veux renforcer mon dos en douceur, sans trop d'impacts.",
-     lambda o, df: int(_top(o, df).zones_corps_sollicitees_l.apply(lambda z: "dos" in z).sum()) >= 2),
-    ("Équipe sans contact : aucun sport à contact réglementé, et au moins un sport collectif",
-     "Je veux jouer en équipe avec des amis, mais sans aucun contact physique.",
-     lambda o, df: bool((_top(o, df).contact != "réglementé").all()) and bool(_top(o, df).categories_l.apply(lambda c: "sport collectif" in c).any())),
-    ("Pluie et intérieur : tous les sports proposés se pratiquent en intérieur",
-     "Je veux faire du cardio en intérieur, car il pleut souvent où j'habite. Je suis régulier.",
-     lambda o, df: bool(_top(o, df).environnement_l.apply(lambda e: "intérieur" in e).all())),
-    ("Budget nul : seulement des activités sans coût de séance",
-     "Mon budget est de 0 euro, je veux marcher et me promener dehors.",
-     lambda o, df: bool((_top(o, df).budget_seance_min_eur <= 0).all())),
-]
 with tabs[6]:
     st.write("Scénarios types qui vérifient que les contraintes et la cohérence de la recommandation tiennent.")
     if st.button("▶️ Lancer la suite de tests", type="primary"):
@@ -326,3 +275,135 @@ with tabs[7]:
     st.dataframe(df[["sport_id", "nom_sport", "categories", "intensite_loisir_1_5", "difficulte_entree_1_3", "impacts_1_3",
                      "contact", "environnement", "budget_seance_min_eur", "budget_seance_max_eur"]],
                  use_container_width=True, hide_index=True, height=300)
+
+# ================================================================ 9. modèles NLP
+with tabs[8]:
+    st.write("Même jeu d'évaluation, plusieurs modèles de langage : justesse, robustesse et coût.")
+    st.caption("**Scénarios** : contraintes (filtres stricts, indépendants du modèle). **Précision@5** : part du top 5 "
+               "dans la famille attendue, sur 14 intentions. **Robustesse** : accord des top 5 entre formulations d'une "
+               "même intention, sur 5 groupes. Jeu de taille modeste : un écart inférieur à 0,05 n'est pas significatif.")
+    if st.button("▶️ Lancer le benchmark sur tous les modèles", type="primary"):
+        engines = {k: get_engine(k) for k in MODELS}
+        bar = st.progress(0.0, text="Préparation…")
+
+        def _prog(i, n, k):
+            bar.progress(i / n, text=f"Évaluation : {model_label(k)}")
+
+        with st.spinner("Évaluation en cours…"):
+            run_benchmark(engines=engines, progress=_prog)
+        bar.empty()
+        st.success("Benchmark terminé et enregistré.")
+
+    history = read_benchmarks()
+    if not history:
+        st.info("Aucun benchmark enregistré. Lancez-le avec le bouton ci-dessus (le premier passage charge les modèles).")
+    else:
+        last = history[-1]
+        mods = last["models"]
+        keys = list(mods)
+        names = {k: v["label"] for k, v in mods.items()}
+        lab = [names[k] for k in keys]
+        st.caption(f"Dernier benchmark : {datetime.fromtimestamp(last['ts']):%d/%m/%Y %H:%M} · "
+                   f"{len(history)} benchmark(s) enregistré(s)")
+
+        def avg_agree(k):
+            vals = [last["agreement"][f"{k}|{o}"] for o in keys
+                    if o != k and last["agreement"].get(f"{k}|{o}") is not None]
+            return round(float(np.mean(vals)), 2) if vals else None
+
+        summ = pd.DataFrame([{
+            "Modèle": v["label"], "Scénarios": f"{v['pass']}/{v['n']}",
+            "Précision@5": round(v["p5_mean"], 2), "Robustesse": round(v["para_stability"], 2),
+            "Accord moyen": avg_agree(k), "Latence moy. (ms)": v["ms_mean"], "Latence p95 (ms)": v["ms_p95"],
+            "Chargement (s)": v["load_s"], "Erreur": v["error"] or "—",
+        } for k, v in mods.items()])
+        st.dataframe(summ, hide_index=True, use_container_width=True)
+
+        c1, c2 = st.columns(2)
+        long = summ.melt(id_vars="Modèle", value_vars=["Précision@5", "Robustesse"], var_name="Mesure", value_name="Score")
+        c1.plotly_chart(px.bar(long, x="Modèle", y="Score", color="Mesure", barmode="group", range_y=[0, 1],
+                               title="Justesse et robustesse (0 à 1)", height=380), use_container_width=True)
+        c2.plotly_chart(px.scatter(summ, x="Latence moy. (ms)", y="Précision@5", text="Modèle", title="Compromis : précision vs latence",
+                                   height=380).update_traces(textposition="top center"), use_container_width=True)
+
+        am = np.array([[last["agreement"].get(f"{a}|{b}", np.nan) for b in keys] for a in keys], dtype=float)
+        pm = np.array([[next(g["p5"] for g in mods[k]["gold"] if g["intent"] == i) for k in keys]
+                       for i in [g["intent"] for g in mods[keys[0]]["gold"]]])
+        intents = [g["intent"] for g in mods[keys[0]]["gold"]]
+        c3, c4 = st.columns(2)
+        c3.plotly_chart(go.Figure(go.Heatmap(z=am, x=lab, y=lab, zmin=0, zmax=1, colorscale="Blues",
+                                             text=np.round(am, 2), texttemplate="%{text}"))
+                        .update_layout(title="Accord des top 5 entre modèles (Jaccard)", height=380),
+                        use_container_width=True)
+        c4.plotly_chart(go.Figure(go.Heatmap(z=pm, x=lab, y=intents, zmin=0, zmax=1, colorscale="RdYlGn",
+                                             text=np.round(pm, 2), texttemplate="%{text:.1f}"))
+                        .update_layout(title="Précision@5 par intention", height=380),
+                        use_container_width=True)
+
+        st.markdown("#### Scénarios de contraintes")
+        pn = [p["persona"] for p in mods[keys[0]]["personas"]]
+        grid = pd.DataFrame({names[k]: ["✅" if p["ok"] else "❌" for p in mods[k]["personas"]] for k in keys}, index=pn)
+        st.dataframe(grid, use_container_width=True)
+
+        st.markdown("#### Détail : ce que chaque modèle propose")
+        mode = st.radio("Voir", ["Une intention", "Une formulation (paraphrases)", "Un scénario de contraintes"],
+                        horizontal=True, key="bench_mode")
+        if mode == "Une intention":
+            it = st.selectbox("Intention", intents, key="bench_int")
+            rows = []
+            for k in keys:
+                g = next(g for g in mods[k]["gold"] if g["intent"] == it)
+                rows.append({"Modèle": names[k], "Précision@5": g["p5"], **{f"#{i + 1}": t for i, t in enumerate(g["top5"])}})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            expected = next(e for n, _, e in GOLD if n == it)
+            st.caption("Familles attendues : " + ", ".join(sorted(expected)))
+        elif mode == "Une formulation (paraphrases)":
+            gp = st.selectbox("Groupe de formulations", [p["group"] for p in mods[keys[0]]["para"]], key="bench_para")
+            texts = next(t for g, t in PARAPHRASES if g == gp)
+            for i, t in enumerate(texts, 1):
+                st.write(f"**Formulation {i}** : « {t} »")
+            rows = []
+            for k in keys:
+                pr = next(p for p in mods[k]["para"] if p["group"] == gp)
+                rows.append({"Modèle": names[k], "Stabilité": pr["stability"],
+                             **{f"Formulation {i + 1}": " · ".join(top) for i, top in enumerate(pr["tops"])}})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        else:
+            sc = st.selectbox("Scénario", pn, key="bench_sc")
+            rows = [{"Modèle": names[k], "Résultat": "✅" if p["ok"] else "❌", "Top 5": " · ".join(p["top5"])}
+                    for k in keys for p in mods[k]["personas"] if p["persona"] == sc]
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        if len(history) > 1:
+            tr = pd.DataFrame([{"date": datetime.fromtimestamp(h["ts"]), "Modèle": v["label"], "Précision@5": v["p5_mean"]}
+                               for h in history for v in h["models"].values() if "p5_mean" in v])
+            st.plotly_chart(px.line(tr, x="date", y="Précision@5", color="Modèle", markers=True,
+                                    title="Évolution entre benchmarks"), use_container_width=True)
+
+    st.markdown("#### En production : runs par modèle")
+    if not runs:
+        st.info("Aucun run enregistré.")
+    else:
+        prod = pd.DataFrame([{"Modèle": model_label(normalize_model_key(r.get("engine"))), "ms": r["timings_ms"]["total"]}
+                             for r in runs])
+        g = prod.groupby("Modèle")["ms"].agg(["count", "median"]).reset_index()
+        g.columns = ["Modèle", "Runs", "Latence médiane (ms)"]
+        st.dataframe(g, hide_index=True, use_container_width=True)
+        by_text = {}
+        for r in runs:
+            by_text.setdefault(r["text"], {})[normalize_model_key(r.get("engine"))] = [t["name"] for t in r["top"]]
+        ov = []
+        for d in by_text.values():
+            ks = list(d)
+            for i in range(len(ks)):
+                for j in range(i + 1, len(ks)):
+                    a, b = set(d[ks[i]]), set(d[ks[j]])
+                    ov.append({"Paire": f"{model_label(ks[i])} / {model_label(ks[j])}",
+                               "Jaccard": len(a & b) / len(a | b) if a | b else 1.0})
+        if ov:
+            o2 = pd.DataFrame(ov).groupby("Paire")["Jaccard"].agg(["count", "mean"]).reset_index()
+            o2.columns = ["Paire de modèles", "Textes communs", "Accord moyen (Jaccard)"]
+            st.dataframe(o2, hide_index=True, use_container_width=True)
+        else:
+            st.caption("Aucun texte n'a encore été analysé avec deux modèles. Changez de modèle dans la barre latérale "
+                       "de l'application pour comparer en production.")

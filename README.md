@@ -424,11 +424,48 @@ Page **Admin** (menu latéral) :
 | 🗺️ Carte des sports | projection PCA des embeddings, texte utilisateur superposé |
 | 🎛️ Labo de sensibilité | variation des poids et mouvement du classement (▲ ▼ 🆕) |
 | ✅ Tests | **16 scénarios de cohérence** (genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
+| 🧠 Modèles NLP | comparaison des 4 modèles (scénarios, précision, robustesse, latence, accord), historique des benchmarks, détail par intention, runs de production par modèle |
 | 🧬 Dataset | statistiques et exploration des 106 sports |
 
 Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/app.log` (non versionnés).
 
 ---
+
+## 6bis. Comparaison des modèles NLP
+
+L'application permet de choisir le modèle sémantique dans la barre latérale. Quatre modèles sont comparés :
+
+| Clé | Modèle | Rôle |
+|---|---|---|
+| `tfidf` | TF-IDF seul | référence lexicale, sans réseau de neurones |
+| `minilm` | SBERT MiniLM multilingue (**défaut**) | embeddings multilingues légers |
+| `camembert` | sentence-camembert-base | entraîné sur le français |
+| `mpnet` | paraphrase-multilingual-mpnet-base-v2 | version plus grande, multilingue |
+
+**Mesures** (module `benchmark.py`, jeux de test dans `personas.py` et `gold.py`) :
+
+- **Scénarios** : 16 contraintes strictes (genou fragile, pas de contact, budget…). Ces filtres ne dépendent pas du modèle.
+- **Précision@5** : sur 14 intentions (« je veux me détendre », « sport de ballon en équipe »…), part du top 5 appartenant à la famille attendue.
+- **Robustesse** : sur 5 groupes de 3 formulations d'une même intention, accord moyen des top 5 (indice de Jaccard).
+- **Latence** moyenne et p95, temps de chargement, accord entre modèles.
+
+**Résultats au moment de la rédaction** :
+
+| Modèle | Scénarios | Précision@5 | Robustesse | Latence moyenne |
+|---|---|---|---|---|
+| TF-IDF seul | 16/16 | 0,66 | 0,32 | ~35 ms |
+| SBERT MiniLM (défaut) | 16/16 | 0,71 | 0,41 | ~120 ms |
+| CamemBERT | 16/16 | 0,73 | 0,41 | ~230 ms |
+| MPNet multilingue | 16/16 | 0,73 | 0,38 | ~220 ms |
+
+**Lecture honnête** : les contraintes ne départagent pas les modèles (elles sont traitées par des règles). Les écarts
+de précision et de robustesse sont faibles, et le jeu compte 14 intentions : un écart inférieur à 0,05 n'est pas
+significatif. MiniLM est retenu par défaut : il est environ deux fois plus rapide que CamemBERT ou MPNet pour une
+précision comparable. Le panneau Admin (onglet « 🧠 Modèles NLP ») permet de relancer le benchmark et d'élargir le jeu.
+
+```bash
+python benchmark.py   # exécution en ligne de commande
+```
 
 ## 7. Limites et pistes d'évolution
 

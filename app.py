@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import explain_ui
-from shared import get_engine
+from shared import DEFAULT_MODEL, MODELS, get_engine, model_label
 from telemetry import get_logger, log_run
 from engine import (BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, 
                     Recommender, UserProfile)
@@ -21,14 +21,15 @@ ZONES = ["dos", "épaules", "bras", "abdominaux", "cuisses", "hanches et fessier
 BLOCK_COLORS = {"condition": "#2E7D6B", "objectifs": "#3B6FB6", "preferences": "#E0913A", "contraintes": "#8E5BB5"}
 
 
-engine, sbert_error, boot_s = get_engine()
-
 # ---------------------------------------------------------------- barre latérale
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    st.caption("Modèle sémantique : " + ("SBERT multilingue + TF-IDF" if engine.embedder else "TF-IDF seul (SBERT indisponible)"))
+    model_key = st.selectbox("Modèle NLP", list(MODELS), index=list(MODELS).index(DEFAULT_MODEL),
+                             format_func=model_label, key="model_key")
+    engine, sbert_error, boot_s = get_engine(model_key)
+    st.caption("Modèle sémantique : " + (model_label(model_key) if engine.embedder else "TF-IDF seul (modèle indisponible)"))
     if sbert_error:
-        st.warning("SBERT n'a pas pu être chargé : " + sbert_error[:150])
+        st.warning("Le modèle n'a pas pu être chargé : " + sbert_error[:150])
     with st.expander("Pondération des blocs"):
         st.caption("Par défaut : objectifs 35 %, condition 30 %, préférences 20 %, contraintes 15 %. "
                    "Les valeurs sont normalisées pour sommer à 100 %.")
@@ -87,9 +88,9 @@ except Exception:
     get_logger().exception("Échec de la recommandation")
     st.error("Une erreur est survenue pendant l'analyse (voir le panneau admin).")
     st.stop()
-run_key = (repr(profile), str(weights))
+run_key = (repr(profile), str(weights), model_key)
 if st.session_state.get("_last_run_key") != run_key:
-    log_run(profile, out, "SBERT+TFIDF" if engine.embedder else "TFIDF")
+    log_run(profile, out, model_key if engine.embedder else "tfidf")
     st.session_state["_last_run_key"] = run_key
 R, results = out["resolved"], out["results"]
 
