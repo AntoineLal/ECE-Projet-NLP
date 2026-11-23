@@ -23,6 +23,7 @@ from extraction import TextSignals, extract_signals, route_sentences
 from preprocess import fold, preprocess_str
 
 DATA_PATH = Path(__file__).parent / "data" / "disciplines.xlsx"
+EXTRA_PATH = Path(__file__).parent / "data" / "disciplines_extra.csv"   # sports ajoutés, même schéma
 CACHE_DIR = Path(__file__).parent / "data" / ".cache"
 
 BLOCKS = ["condition", "objectifs", "preferences", "contraintes"]
@@ -56,11 +57,14 @@ FAMILIES = {
     "Marche et randonnée": {"marche", "terrain naturel", "orientation"},
     "Escalade": {"escalade", "franchissement"},
     "Équitation": {"équitation"},
+    "Mobilité et bien-être": {"mobilité", "relaxation"},
+    "Salle et cardio": {"sport en salle"},
 }
 TEXT_FAM = {"fam:collectif": "Sports collectifs", "fam:ballon": "Sports de ballon", "fam:raquette": "Raquette", "fam:combat": "Combat", "fam:eau": "Eau",
             "fam:glisse": "Glisse (neige, glace, roulettes)", "fam:course": "Course et athlétisme",
             "fam:cyclisme": "Cyclisme", "fam:gym-danse": "Gymnastique et danse", "fam:cible": "Précision et cible",
-            "fam:marche": "Marche et randonnée", "fam:escalade": "Escalade"}
+            "fam:marche": "Marche et randonnée", "fam:escalade": "Escalade",
+            "fam:bienetre": "Mobilité et bien-être", "fam:salle": "Salle et cardio"}
 EXPERIENCE = {"débutant": 1, "occasionnel": 2, "régulier": 3, "confirmé": 4}
 IMPACT_TOL = ["faible", "moyenne", "élevée"]
 INTENSITY_LABEL = {1: "faible", 2: "légère", 3: "modérée", 4: "soutenue", 5: "très soutenue"}
@@ -126,6 +130,7 @@ class Resolved:
     target_intensity: float
     notes: list
     sources: dict
+    balance_issue: bool = False
 
 
 @dataclass
@@ -142,6 +147,9 @@ class Result:
 
 def load_sports() -> pd.DataFrame:
     df = pd.read_excel(DATA_PATH, sheet_name="Disciplines")
+    if EXTRA_PATH.exists():
+        extra = pd.read_csv(EXTRA_PATH, encoding="utf-8")
+        df = pd.concat([df, extra[df.columns]], ignore_index=True)
     for c in ["categories", "zones_corps_sollicitees", "capacites_principales", "objectifs", "format_pratique",
               "environnement", "equipement", "mots_cles"]:
         df[c + "_l"] = df[c].apply(_split)
@@ -271,7 +279,8 @@ class Recommender:
         if sig.injured_zones:
             notes.append("Blessure / rééducation détectée (" + ", ".join(sorted(sig.injured_zones)) +
                          ") : les sports qui sollicitent cette zone sont écartés ou pénalisés")
-        weather_indoor = sig.weather and envs == ["intérieur"]
+        # sensibilité météo déclarée + pas de demande d'extérieur => pratique en intérieur
+        weather_indoor = bool(sig.weather) and envs != ["extérieur"] and p.environnement != "extérieur"
         if weather_indoor:
             notes.append("Pratique en intérieur + sensibilité à la météo : sports uniquement extérieurs écartés")
         return Resolved(p=p, sig=sig, abilities=ab, exp_level=L, exp_label=exp, goals=goals, goal_zones=goal_zones,
@@ -279,7 +288,7 @@ class Recommender:
                         disliked_families=sorted(dislike_fam), disliked_formats=sorted(disliked_formats),
                         impact_tol=tol, spare_hard=sorted(set(p.spare_zones) | sig.injured_zones),
                         spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones) - sig.injured_zones),
-                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
+                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, balance_issue=sig.balance_issue, no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
                         no_indoor=no_in and p.environnement != "intérieur",
                         target_intensity=target, notes=notes, sources=src)
 
@@ -352,9 +361,18 @@ class Recommender:
         lvl_fit = 1 - 0.35 * max(0, r.difficulte_entree_1_3 - allowed)
         diff = r.intensite_loisir_1_5 - R.target_intensity
         int_fit = 1 - (max(0, diff - 0.5) / 3 + max(0, -diff - 1.0) / 4)
-        cond = _clip(0.5 * cap_fit + 0.25 * lvl_fit + 0.25 * int_fit)
-        det["condition"] = [("exigences physiques vs capacités", cap_fit), ("difficulté d'entrée vs niveau", lvl_fit),
-                            ("intensité vs intensité cible", int_fit)]
+        # fréquence hebdomadaire : peu de séances pour un effort soutenu = récupération insuffisante
+        freq_fit = 0.6 if (R.p.sessions_per_week <= 2 and r.intensite_loisir_1_5 >= 4) else 1.0
+        cond_items = [("exigences physiques vs capacités", cap_fit), ("difficulté d'entrée vs niveau", lvl_fit),
+                      ("intensité vs intensité cible", int_fit), ("fréquence de séances vs effort", freq_fit)]
+        if R.balance_issue:
+            # équilibre déclaré fragile : on compare l'équilibre demandé à la stabilité signalée
+            eq_fit = _clip(1 - 0.2 * max(0, r.equilibre_1_5 - 2))
+            cond = _clip(0.35 * cap_fit + 0.2 * lvl_fit + 0.2 * int_fit + 0.1 * freq_fit + 0.15 * eq_fit)
+            cond_items.append(("équilibre demandé vs stabilité signalée", eq_fit))
+        else:
+            cond = _clip(0.4 * cap_fit + 0.25 * lvl_fit + 0.2 * int_fit + 0.15 * freq_fit)
+        det["condition"] = cond_items
         # --- objectifs
         gs = []
         for g in R.goals:
@@ -453,6 +471,8 @@ class Recommender:
                 f *= 0.6; why.append("⚠ sollicite la zone blessée (" + ", ".join(sorted(inj)) + ") : à valider avec un professionnel de santé (×0,6)")
             else:
                 f *= 0.8; why.append("sollicite la zone blessée : " + ", ".join(sorted(inj)) + " (×0,8)")
+        if R.balance_issue and r.equilibre_1_5 >= 4:
+            f *= 0.85; why.append("équilibre très sollicité alors que vous signalez des soucis d'équilibre (×0,85)")
         if R.exp_level == 1 and r.difficulte_entree_1_3 == 3:
             f *= 0.9; why.append("technique exigeante pour un débutant (×0,9)")
         return f, why
@@ -553,7 +573,7 @@ class Recommender:
             sem_i = {b: float(sem[b][i]) for b in sem}
             results.append(Result(r.sport_id, r.nom_sport, r, tot, blocks, st, sem_i,
                                   self._bullets(R, r, det, sb_raw, tf_raw, i, sent_best)))
-        # anatomie de la décision pour les 70 sports (interface « Pourquoi ? »)
+        # anatomie de la décision pour les 106 sports (interface « Pourquoi ? »)
         rank_of = {x[0]: n for n, x in enumerate(order, 1)}
         anatomy = []
         for i, tot, blocks, st, det in rows:

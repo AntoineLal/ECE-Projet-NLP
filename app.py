@@ -39,7 +39,7 @@ with st.sidebar:
             "d'exercices. Consultez un professionnel de santé en cas de doute.")
 
 st.title("🏃 Quel sport est fait pour vous ?")
-st.write("Décrivez votre profil, nous le comparons sémantiquement à **70 disciplines** et vous proposons le **top 5**.")
+st.write("Décrivez votre profil, nous le comparons sémantiquement à **106 disciplines** et vous proposons le **top 5**.")
 
 if "txt" not in st.session_state:
     st.session_state.txt = ""
@@ -180,7 +180,7 @@ with t1:
     st.plotly_chart(fig, use_container_width=True)
     st.caption(f"⏱ Analyse réalisée en {out['timings']['total']:.0f} ms.")
     st.caption("Score d'un bloc = 40 % score structuré (déduit du texte et des échelles) + 60 % similarité "
-               "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur les 70 sports). Total = somme pondérée des blocs.")
+               "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur les 106 sports). Total = somme pondérée des blocs.")
 
 with t2:
     pick = st.selectbox("Sport à comparer", [x.name for x in results])

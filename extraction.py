@@ -78,6 +78,8 @@ PREF_LEX = {
     "fam:cible": r"cible|precision|golf|petanque|arc\b|bowling",
     "fam:marche": r"randonnee|marche|balade|trek",
     "fam:escalade": r"escalade|grimp|bloc\b",
+    "fam:bienetre": r"yoga|pilates|tai.?chi|etirement|relaxation|gym douce",
+    "fam:salle": r"musculation|crossfit|spinning|zumba|elliptique|rameur|tapis de course|cardio",
 }
 
 PREF_CUE = r"prefer|aime|adore|plutot|envie|attir|passionn|pratiquer|deteste|interess|collectif|individuel"
@@ -102,7 +104,8 @@ CONDITION_LEX = [
 ]
 INJURY = r"blesse|blessure|douleur|mal (?:au|aux|a)|operee?|tendinite|rehabilit|reeduc|convalescen|hernie|entorse|soulag|luxation|fracture|lumbago"
 GENTLE = r"\bcalmes?\b|\bdoux\b|\bdouces?\b|douceur|tranquille|\blegere?s?\b|sans forcer|apais|menag|sans effort|reeduc|rehabilit|convalescen|soulag"
-WEATHER = r"meteo|pluie|froid|intemperies|mauvais temps|climat"
+WEATHER = r"meteo|pluie|pleut|pleuvoir|pleuv|pluvieu|froid|intemperies|mauvais temps|climat"
+BALANCE = r"vertige|instabilit|tiens? mal sur|tenir mal sur|peur de tomber|desequilibr|je tombe|chutes?\b"
 PRACTICE = r"(?:\bje|\bj') ?(?:pratique|joue|fais|faisais|pratiquais|jouais|suis inscrit|vais)\b|\bj'ai (?:fait|pratique|joue)\b"
 CLAUSE_SPLIT = r",|;|\bmais\b|\bdonc\b|\bcar\b|\bpuis\b"
 
@@ -127,6 +130,7 @@ class TextSignals:
     injured_zones: set = field(default_factory=set)   # blessure / douleur / rééducation explicite
     gentle: bool = False                               # demande d'une pratique douce
     weather: bool = False                              # sensibilité à la météo
+    balance_issue: bool = False                        # équilibre déclaré fragile (vertige, peur de tomber…)
     practice_clauses: list = field(default_factory=list)  # ce que l'utilisateur pratique déjà
     sentences: list = field(default_factory=list)
 
@@ -166,6 +170,7 @@ def extract_signals(text: str) -> TextSignals:
             (sig.disliked if _negated(pref_text, m.start()) else sig.prefs).add(key)
     sig.gentle = re.search(GENTLE, t) is not None
     sig.weather = re.search(WEATHER, t) is not None
+    sig.balance_issue = re.search(BALANCE, t) is not None
     for sent in (fold(s) for s in sig.sentences):
         if re.search(INJURY, sent):
             for zone, rx in ZONE_LEX.items():

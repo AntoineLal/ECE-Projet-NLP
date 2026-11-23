@@ -18,7 +18,7 @@ class SbertEmbedder:
         return self.model.encode(list(texts), normalize_embeddings=True, show_progress_bar=False)
 
 
-@st.cache_resource(show_spinner="Chargement du modèle SBERT et indexation des 70 sports…")
+@st.cache_resource(show_spinner="Chargement du modèle SBERT et indexation des 106 sports…")
 def get_engine():
     """Retourne (moteur, erreur, secondes de démarrage)."""
     lg, t = get_logger(), time.perf_counter()

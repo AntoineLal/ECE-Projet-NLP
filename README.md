@@ -1,7 +1,7 @@
 # 🏃 ECE-Projet-NLP — Recommandation intelligente d'activités sportives
 
 > **Thème 7** — Recommandation d'activités sportives fondée sur l'analyse sémantique du profil physique et des objectifs personnels.
-> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 70 disciplines et
+> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 106 disciplines et
 > propose un **top 5 expliqué**, avec la possibilité de voir *pourquoi* chaque sport est recommandé ou écarté.
 >
 > ⚠️ Outil d'aide à la **découverte** d'activités. Ce n'est ni un diagnostic médical ni une prescription d'exercices.
@@ -9,7 +9,7 @@
 | | |
 |---|---|
 | **Entrée** | un texte libre + 4 échelles rapides (endurance, force, mobilité, motivation) + niveau + disponibilité |
-| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 70 sports |
+| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 106 sports |
 | **NLP** | prétraitement FR, extraction par lexiques + négation, SBERT multilingue, TF-IDF, similarité cosinus |
 | **Stack** | Python 3.12 · Streamlit · sentence-transformers · scikit-learn · NLTK · pandas · Plotly |
 
@@ -35,7 +35,7 @@ streamlit run app.py
 ```
 
 Le premier lancement télécharge le modèle SBERT (`paraphrase-multilingual-MiniLM-L12-v2`, ~470 Mo) et met en cache les
-embeddings des 70 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
+embeddings des 106 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
 
 - **Page principale** : questionnaire → top 5 → section « Pourquoi ce résultat ? » → visualisations.
 - **Page Admin** (menu latéral) : supervision, logs, historique, tests. Mot de passe optionnel via `ADMIN_PASSWORD`.
@@ -106,7 +106,7 @@ flowchart TB
 flowchart TB
     P["Page principale"] --> S["📋 Synthèse de mon profil<br/>ce que l'application a compris"]
     P --> T["🏆 Mon top 5<br/>score + explication par sport"]
-    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 70 → compatibles → top 5"]
+    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 106 → compatibles → top 5"]
     P --> V["📊 Visualisations<br/>barres, radar, carte des affinités"]
     W --> W1["✅ Pourquoi ce sport est recommandé"]
     W --> W2["🟡 Pourquoi il n'est pas dans le top 5"]
@@ -117,7 +117,7 @@ flowchart TB
     A --> A4["✅ Tests de cohérence"]
 ```
 
-La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 70 sports :
+La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 106 sports :
 
 | Statut | Ce que l'écran montre |
 |---|---|
@@ -143,7 +143,8 @@ projet/
 ├── shared.py              # Chargement unique du modèle SBERT et du moteur (cache Streamlit)
 ├── telemetry.py           # Journalisation : runs (JSONL) + logs applicatifs
 ├── data/
-│   ├── disciplines.xlsx   # 70 sports × 26 champs (+ feuille « Guide des champs »)
+│   ├── disciplines.xlsx   # 106 sports d'origine × 26 champs (+ feuille « Guide des champs »)
+│   ├── disciplines_extra.csv  # 36 sports ajoutés, même schéma (fusionnés au chargement)
 │   ├── .cache/            # embeddings SBERT mis en cache (non versionné)
 │   └── logs/              # runs.jsonl, app.log (non versionnés)
 ├── .streamlit/config.toml
@@ -171,7 +172,7 @@ flowchart TB
     EXT --> PRE
     ENG --> SB
     ENG --> TF[["TF-IDF<br/>scikit-learn"]]
-    ENG --> DATA[("data/disciplines.xlsx<br/>70 sports")]
+    ENG --> DATA[("data/disciplines.xlsx + disciplines_extra.csv<br/>106 sports")]
 
     TEL --> RUNS[("data/logs/<br/>runs.jsonl · app.log")]
     ADM --> RUNS
@@ -204,12 +205,12 @@ sequenceDiagram
     E->>X: extract_signals(texte)
     X-->>E: objectifs, zones, préférences, contraintes, blessures, douceur, budget
     E->>E: resolve() : fusion formulaire + texte, intensité cible
-    E->>E: filter_hard() : 70 sports → sports compatibles
+    E->>E: filter_hard() : 106 sports → sports compatibles
     E->>S: embeddings des 4 textes-blocs de l'utilisateur
-    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 70 sports
+    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 106 sports
     E->>E: score structuré + sémantique par bloc, agrégation pondérée
     E->>E: garde-fous multiplicatifs, tri, top 5, explications
-    E-->>A: résultats + anatomie de la décision des 70 sports + temps par étape
+    E-->>A: résultats + anatomie de la décision des 106 sports + temps par étape
     A->>T: log_run() (runs.jsonl, app.log)
     A-->>U: top 5, synthèse, « Pourquoi ? », graphiques
 ```
@@ -228,7 +229,7 @@ flowchart LR
     RT --> UT["4 textes utilisateur<br/>(1 par bloc)"]
     UT --> EMB["SBERT : embedding"]
     UT --> STM["Stop-words + racines Snowball"] --> TFV["TF-IDF (1-2 grammes)"]
-    EMB --> COS["Similarité cosinus<br/>vs 70 textes-blocs de sports"]
+    EMB --> COS["Similarité cosinus<br/>vs 106 textes-blocs de sports"]
     TFV --> COS
     SIG --> STR["Scores structurés<br/>+ filtres + garde-fous"]
     COS --> AGG["Agrégation pondérée"]
@@ -248,7 +249,7 @@ flowchart LR
 
 ### 3.5 Modèle de données de la décision
 
-`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 70 sports** :
+`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 106 sports** :
 
 ```text
 sport_id, name
@@ -296,7 +297,7 @@ $$
 
 - $S_b$ : score **structuré** (règles, voir 4.3) ;
 - $M_b$ : score **sémantique** ; le cosinus entre le texte utilisateur du bloc et le texte-bloc de chaque sport est normalisé
-  (min-max) sur les 70 sports, car les cosinus SBERT sont tous dans une plage étroite ;
+  (min-max) sur les 106 sports, car les cosinus SBERT sont tous dans une plage étroite ;
 - si $S_b$ ou $M_b$ est absent, l'autre est utilisé seul.
 
 ### 4.3 Scores structurés $S_b$
@@ -304,7 +305,7 @@ $$
 **💪 Condition physique**
 
 $$
-S_{cond} = 0{,}5\,F_{cap} + 0{,}25\,F_{niv} + 0{,}25\,F_{int}
+S_{cond} = 0{,}4\,F_{cap} + 0{,}25\,F_{niv} + 0{,}2\,F_{int} + 0{,}15\,F_{freq}\qquad\text{(si vertiges ou instabilité signalés : } 0{,}35\,F_{cap} + 0{,}2\,F_{niv} + 0{,}2\,F_{int} + 0{,}1\,F_{freq} + 0{,}15\,F_{eq}\text{)}
 $$
 
 | Terme | Formule |
@@ -312,6 +313,8 @@ $$
 | $F_{cap}$ (exigences vs capacités) | $1-\operatorname{moy}_{c\in\{\text{endurance, force, souplesse}\}} \dfrac{\max\big(0,\;\text{req}_c-(\text{capacité}_c+1)\big)}{4}$ |
 | $F_{niv}$ (difficulté vs niveau) | $1 - 0{,}35\cdot\max(0,\;\text{difficulté} - \text{difficulté tolérée})$ (1 pour débutant, 2 pour occasionnel, 3 au-delà) |
 | $F_{int}$ (intensité vs cible) | $1-\Big(\dfrac{\max(0,\Delta-0{,}5)}{3}+\dfrac{\max(0,-\Delta-1)}{4}\Big)$ avec $\Delta=\text{intensité}-\text{cible}$ |
+| $F_{freq}$ (fréquence vs effort) | $0{,}6$ si 2 séances par semaine ou moins et intensité ≥ 4, sinon $1$ |
+| $F_{eq}$ (équilibre demandé vs stabilité signalée) | $1-0{,}2\cdot\max(0,\;\text{équilibre}-2)$, uniquement si vertiges ou instabilité sont déclarés |
 
 L'**intensité cible** est $\text{clip}\big(1+0{,}5\cdot\text{endurance}+0{,}5\cdot\text{niveau}+0{,}25\cdot(\text{motivation}-3),\,1,\,5\big)$,
 plafonnée à 2 si une pratique douce est demandée. Les capacités saisies sont ajustées de ±1 si le texte dit « je me fatigue vite »,
@@ -357,6 +360,7 @@ Ils empêchent qu'une limitation déclarée soit « diluée » dans la moyenne d
 | Pratique douce + force ≥ 4 / sauts / impacts = 2 | ×0,9 / ×0,85 / ×0,92 |
 | Intensité ≥ 4 alors que la cible ≤ 2,5 | ×0,9 |
 | Débutant + difficulté d'entrée maximale | ×0,9 |
+| Vertiges ou instabilité signalés + équilibre ≥ 4 | ×0,85 |
 | Famille d'activités aimée non respectée | ×0,85 |
 | Format souhaité non respecté | ×0,92 |
 
@@ -389,7 +393,7 @@ et affiché dans la page Admin.
 
 ## 5. Données
 
-`data/disciplines.xlsx` : **70 disciplines** × 26 champs (voir la feuille « Guide des champs »).
+`data/disciplines.xlsx` : **106 disciplines** × 26 champs (voir la feuille « Guide des champs »).
 
 | Famille de champs | Exemples |
 |---|---|
@@ -419,8 +423,8 @@ Page **Admin** (menu latéral) :
 | 📜 Logs | lecture en direct, filtres, téléchargement |
 | 🗺️ Carte des sports | projection PCA des embeddings, texte utilisateur superposé |
 | 🎛️ Labo de sensibilité | variation des poids et mouvement du classement (▲ ▼ 🆕) |
-| ✅ Tests | **9 scénarios de cohérence** (genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé) |
-| 🧬 Dataset | statistiques et exploration des 70 sports |
+| ✅ Tests | **16 scénarios de cohérence** (genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
+| 🧬 Dataset | statistiques et exploration des 106 sports |
 
 Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/app.log` (non versionnés).
 
@@ -430,9 +434,9 @@ Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/ap
 
 **Limites connues**
 
-- Jeu de données restreint : 70 sports, pas de yoga ni de pilates ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
+- Jeu de données restreint : 106 sports ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
 - L'extraction est à base de lexiques : une tournure inhabituelle peut ne pas être détectée (la synthèse du profil montre toujours ce qui a été compris).
-- Les scores sont relatifs à un jeu de 70 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
+- Les scores sont relatifs à un jeu de 106 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
 - Annotations non validées médicalement.
 
 **Extensions envisagées** (le moteur fonctionne indépendamment) : chatbot d'affinage, explications par LLM, RAG sur une base documentaire,

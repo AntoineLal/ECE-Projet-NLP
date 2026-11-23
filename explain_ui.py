@@ -1,4 +1,4 @@
-"""Interface « Pourquoi ? » : explique, pour chacun des 70 sports, pourquoi il est recommandé, classé ou écarté."""
+"""Interface « Pourquoi ? » : explique, pour chacun des 106 sports, pourquoi il est recommandé, classé ou écarté."""
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -180,7 +180,7 @@ def render(out, profile_text: str):
         st.dataframe(pd.DataFrame(rows).round(1), hide_index=True, use_container_width=True)
 
     # ---- classement complet
-    with st.expander("📋 Tableau complet des 70 sports"):
+    with st.expander("📋 Tableau complet des 106 sports"):
         tbl = pd.DataFrame([{
             "Statut": "✅ top 5" if x["in_top"] else ("🟡 non retenu" if x["retained"] else "❌ écarté"),
             "Rang": x["rank"], "Sport": x["name"],
