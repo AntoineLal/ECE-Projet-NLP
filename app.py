@@ -24,22 +24,14 @@ BLOCK_COLORS = {"condition": "#2E7D6B", "objectifs": "#3B6FB6", "preferences": "
 
 
 # ---------------------------------------------------------------- barre latérale
+model_key = DEFAULT_MODEL
+weights = dict(DEFAULT_WEIGHTS)
+llm_settings = load_settings()
+engine, sbert_error, boot_s = get_engine(model_key)
 with st.sidebar:
-    st.header("⚙️ Paramètres")
-    model_key = st.selectbox("Modèle NLP", list(MODELS), index=list(MODELS).index(DEFAULT_MODEL),
-                             format_func=model_label, key="model_key")
-    engine, sbert_error, boot_s = get_engine(model_key)
-    st.caption("Modèle sémantique : " + (model_label(model_key) if engine.embedder else "TF-IDF seul (modèle indisponible)"))
-    llm_settings = load_settings()
     st.caption("IA générative (bonus) : " + llm_settings.describe())
     if sbert_error:
-        st.warning("Le modèle n'a pas pu être chargé : " + sbert_error[:150])
-    with st.expander("Pondération des blocs"):
-        st.caption("Par défaut : objectifs 35 %, condition 30 %, préférences 20 %, contraintes 15 %. "
-                   "Les valeurs sont normalisées pour sommer à 100 %.")
-        w = {b: st.slider(BLOCK_LABELS[b], 0, 100, int(DEFAULT_WEIGHTS[b] * 100), 5) for b in BLOCKS}
-        tot = sum(w.values()) or 1
-        weights = {b: v / tot for b, v in w.items()}
+        st.warning("Le modèle SBERT n'a pas pu être chargé (repli TF-IDF) : " + sbert_error[:150])
     st.info("Outil d'aide à la **découverte** d'activités. Il ne s'agit ni d'un diagnostic médical ni d'une prescription "
             "d'exercices. Consultez un professionnel de santé en cas de doute.")
 

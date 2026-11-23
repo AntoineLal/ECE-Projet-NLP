@@ -134,7 +134,8 @@ def render_chat(out: dict, profile, engine, weights: dict, settings: LLMSettings
     msg = st.chat_input("Ex. : je ne veux aucun sport aquatique…")
     if not msg:
         return
-    res = bc.process_message(msg, profile, out, engine, weights, settings, budget=_budget(settings))
+    history = [{"role": m["role"], "text": m.get("text", "")} for m in chat if m.get("text")]
+    res = bc.process_message(msg, profile, out, engine, weights, settings, budget=_budget(settings), history=history)
     tag = f"Lecture : {res['source']}" + (f" · {res['note']}" if res.get("note") else "")
     chat.append({"role": "user", "text": msg})
     if res["kind"] == "maj":
@@ -142,7 +143,7 @@ def render_chat(out: dict, profile, engine, weights: dict, settings: LLMSettings
                 "rejected": res["rejected"], "precisions": res["precisions"], "n_kept": res["n_kept"],
                 "suggestions": res["suggestions"], "comparison": res["comparison"],
                 "top": bc.top_summary(res["out"])}
-        chat.append({"role": "assistant", "text": "Profil mis à jour et classement recalculé.", "tag": tag,
+        chat.append({"role": "assistant", "text": res["text"], "tag": tag,
                      "card": card, "kind": "maj", "interpretations": res["interpretations"]})
         st.session_state["profile"] = res["profile"]
         st.rerun()  # la page est relancée : le top 5 affiché correspond au nouveau profil

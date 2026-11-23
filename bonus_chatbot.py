@@ -22,7 +22,7 @@ import json
 import re
 from dataclasses import replace
 
-from bonus_llm import CallBudget, LLMError, Transport, call_llm
+from bonus_llm import USER_MESSAGES, CallBudget, LLMError, Transport, call_llm
 from engine import ALL_GOALS, BLOCK_LABELS, BLOCKS, FAMILIES, GROUP_LABEL, GROUPS, INFRA_DEFS, UserProfile
 from extraction import extract_signals
 from llm_config import LLMSettings
@@ -52,7 +52,7 @@ CONTRACT_SHAPE = {
                      "contact": "bool|null"},
     "contraintes_physiques": {"impacts": "impacts|null", "zones_a_menager": "zones", "articulations_douloureuses": "joints"},
     "budget_max_eur": "int|levée|null", "seances_par_semaine": "int|null", "duree_minutes": "int|null",
-    "niveau": "levels|null", "intensite": "int|null", "corrections": "list", "interpretations": "list",
+    "niveau": "levels|null", "intensite": "int|null", "corrections": "list", "interpretations": "list", "reponse": "text",
     "precisions": "list", "question": "dict|null",
 }
 
@@ -110,7 +110,7 @@ def _empty_contract() -> dict:
                          "groupes": [], "lieux": [], "eau": None, "contact": None},
         "contraintes_physiques": {"impacts": None, "zones_a_menager": [], "articulations_douloureuses": []},
         "budget_max_eur": None, "seances_par_semaine": None, "duree_minutes": None, "niveau": None, "intensite": None,
-        "corrections": [], "interpretations": [], "precisions": [], "question": None,
+        "corrections": [], "interpretations": [], "precisions": [], "question": None, "reponse": "",
     }
 
 
@@ -199,6 +199,11 @@ def validate_contract(raw, vocab: dict) -> tuple[dict, list[str]]:
             _fail(rejected, "interpretations", "format attendu : extrait, comprend")
     if isinstance(raw.get("precisions"), list):
         c["precisions"] = [str(x)[:200] for x in raw["precisions"] if isinstance(x, str)][:3]
+    rep_text = raw.get("reponse", "")
+    if isinstance(rep_text, str):
+        c["reponse"] = rep_text.strip()[:900]
+    elif rep_text is not None:
+        _fail(rejected, "reponse", "texte attendu")
     q = raw.get("question")
     if isinstance(q, dict) and q.get("type") in QUESTION_TYPES:
         sports = q.get("sports") if isinstance(q.get("sports"), list) else []
@@ -225,6 +230,7 @@ def merge_contracts(a: dict, b: dict) -> dict:
     out["interpretations"] = (a.get("interpretations") or []) + (b.get("interpretations") or [])
     out["precisions"] = list(dict.fromkeys((a.get("precisions") or []) + (b.get("precisions") or [])))[:3]
     out["question"] = a.get("question") or b.get("question")
+    out["reponse"] = a.get("reponse") or b.get("reponse") or ""
     out["intention"] = a.get("intention") if a.get("intention") not in (None, "autre") else b.get("intention", "autre")
     return out
 
@@ -245,7 +251,7 @@ def contract_is_empty(c: dict) -> bool:
 
 # ------------------------------------------------------------------ lecteur 1 : règles (sans IA)
 LIEU_PATTERNS = {
-    "mer": r"\bmer\b|ocean|littoral|plage|bord de (?:la )?mer|vagues|(?<!a )\bcotes?\b(?!\s+(?:de chez|de moi|de ma|d'ici|de notre|de nous))",
+    "mer": r"\bmer\b|ocean|littoral|plage|bord de (?:la )?mer|vagues|(?<!a )(?<!longe-)(?<!longe )\bcotes?\b(?!\s+(?:de chez|de moi|de ma|d'ici|de notre|de nous))",
     "plan_eau": r"\blac\b|riviere|plan d'eau|\betang|canal|eau vive",
     "piscine": r"piscine|bassin",
     "stade": r"stade|terrain de (?:foot|rugby|sport|football)|\bpiste\b(?!\s+(?:cyclable|de ski))|athletisme|pelouse|terrain de jeu",
@@ -279,7 +285,7 @@ GROUP_PATTERNS = {
     "sports_de_raquette": r"sports? de raquette|raquettes?\b",
     "sports_de_combat": r"sports? de combat|combats?\b|arts? martiaux|boxe|judo|karate|\blutte\b|kick|muay",
     "sports_de_glisse": r"sports? de glisse|\bglisse\b",
-    "sports_aquatiques": r"aquatiques?|\bnager\b|natation|\bnage\b|\bwater|dans l'eau|sur l'eau",
+    "sports_aquatiques": r"aquatiques?|\bnager\b|natation|\bnage\b|\bwater|\beau\b|longe.cote|surf|kayak|voile",
     "sports_equestres": r"equitation|\bcheval\b|dressage",
     "sports_de_cible": r"sports? de cible|\btir\b",
     "course_a_pied": r"course a pied|courir|\bcourse\b|footing|jogging|running|\bsprint",
@@ -478,55 +484,69 @@ def rules_contract(message: str, vocab: dict, engine) -> dict:
     c["precisions"] = list(dict.fromkeys(c["precisions"]))[:3]
     if not contract_is_empty(c):
         c["intention"] = "mise_a_jour"
+    if c["interpretations"]:
+        c["reponse"] = "D'accord, j'ai bien compris : " + " ".join(i["comprend"] for i in c["interpretations"][:3]) + \
+            " Je relance le classement."
     return c
 
 
 # ------------------------------------------------------------------ lecteur 2 : Gemini (JSON strict)
-CONTRACT_PROMPT = """Tu lis UN message d'un utilisateur d'une application de recommandation sportive, écrit en langage libre,
-et tu le traduis en un objet JSON qui respecte EXACTEMENT le schéma. Tu réponds uniquement par le JSON.
+CONTRACT_PROMPT = """Tu es l'assistant conversationnel d'une application de recommandation sportive. Tu parles avec
+l'utilisateur comme un interlocuteur humain attentif. Tu comprends ce qu'il veut dire, même formulé librement, sans
+phrases types, et tu lui réponds naturellement en français.
 
-Ce que tu dois comprendre, même formulé indirectement :
-- un lieu INDISPONIBLE (« je n'ai pas de mer à côté », « pas de stade près de chez moi ») : indisponibilites.lieux
-  Un lieu est choisi parmi : LIEUX. Exemples : mer (surf, longe-côte…), stade (football, rugby, lancer du poids, piste…),
-  piscine, plan_eau (lac, rivière), neige (ski, snowboard…), dojo (arts martiaux, boxe…).
-- un groupe de sports refusé (« je n'aime pas les sports de balle ») : exclusions_strictes.groupes
-  Un groupe est choisi parmi : GROUPES.
-- un goût pour un groupe (« j'aime les sports de combat ») : preferences_souples.groupes (favorise, n'exclut pas).
-- une exclusion STRICTE (« je ne veux pas », « aucun », « jamais », « sans », « uniquement », « éviter ») : exclusions_strictes.
-- une préférence SOUPLE (« je préfère », « j'aime », « plutôt ») : preferences_souples.
-- une acceptation (« finalement j'accepte », « je veux bien ») : acceptations.
-- une correction (« finalement intérieur » après « extérieur ») : corrections.
-- interpretations : pour chaque élément compris, une phrase {"extrait": "fragment du message", "comprend": "ce que tu as compris, en français simple"}.
-- precisions : une question SEULEMENT si le message est vraiment ambigu. Ne demande pas ce qui est clair.
-- N'invente jamais une information absente du message. Ne donne aucun score ni classement.
+Ta réponse est un unique objet JSON :
+- "reponse" : ton message à l'utilisateur, naturel et bienveillant, 1 à 4 phrases. Explique ce que tu as compris et ce
+  que tu fais, ou pourquoi tu ne peux pas le faire. Ne donne JAMAIS de score ni de classement : ils viennent du moteur.
+  Si l'utilisateur pose une question, réponds-y à partir du classement actuel fourni.
+- "interpretations" : une phrase par élément compris, {"extrait": "fragment du message", "comprend": "..."}.
+- les champs de modification ci-dessous, UNIQUEMENT si l'utilisateur demande un changement de profil. Sinon, laisse-les vides.
+- "precisions" : une question seulement si le message est vraiment ambigu.
+
+Repères pour comprendre les demandes :
+- un lieu indisponible (« pas de mer près de chez moi », « je n'ai pas de stade ») -> indisponibilites.lieux parmi : LIEUX
+- un groupe de sports refusé (« je n'aime pas les sports de balle », « je n'aime pas l'eau ») -> exclusions_strictes.groupes parmi : GROUPES
+- un groupe apprécié (« j'aime les sports de combat ») -> preferences_souples.groupes (favorise sans exclure)
+- un refus (« je ne veux pas », « aucun », « sans », « uniquement », « je n'aime pas ») -> exclusions_strictes (strict)
+- une préférence (« je préfère », « plutôt ») -> preferences_souples (souple)
+- « finalement j'accepte… » -> acceptations ; une valeur corrigée -> corrections
+- N'invente jamais une information absente du message. Un sport cité doit exister dans le dataset.
 
 Schéma :
 {
+ "reponse": "texte naturel",
  "intention": "mise_a_jour" | "question" | "autre",
+ "interpretations": [{"extrait": "...", "comprend": "..."}],
  "objectifs_ajoutes": [OBJECTIFS],
  "preferences_souples": {"familles": [FAMILLES], "formats": ["individuel","duo","équipe","groupe"], "environnement": "intérieur"|"extérieur"|null, "groupes": [GROUPES]},
- "exclusions_strictes": {"familles": [FAMILLES], "formats": [...], "categories": [CATEGORIES], "sports": [SPORTS],
-                         "environnements": ["intérieur"|"extérieur"], "groupes": [GROUPES], "eau": true|null,
-                         "contact": false|null, "seul_uniquement": true|null},
+ "exclusions_strictes": {"familles": [FAMILLES], "formats": [...], "categories": [CATEGORIES], "sports": [SPORTS], "environnements": ["intérieur"|"extérieur"], "groupes": [GROUPES], "eau": true|null, "contact": false|null, "seul_uniquement": true|null},
  "indisponibilites": {"lieux": [LIEUX]},
- "acceptations": {"familles": [...], "formats": [...], "categories": [...], "sports": [...], "environnements": [...],
-                  "groupes": [...], "lieux": [LIEUX], "eau": false|null, "contact": true|null},
- "contraintes_physiques": {"impacts": "faible"|"moyenne"|"élevée"|null, "zones_a_menager": [ZONES],
-                           "articulations_douloureuses": [ARTICULATIONS]},
+ "acceptations": {"familles": [...], "formats": [...], "categories": [...], "sports": [...], "environnements": [...], "groupes": [...], "lieux": [LIEUX], "eau": false|null, "contact": true|null},
+ "contraintes_physiques": {"impacts": "faible"|"moyenne"|"élevée"|null, "zones_a_menager": [ZONES], "articulations_douloureuses": [ARTICULATIONS]},
  "budget_max_eur": entier 0-300 | "levée" | null,
  "seances_par_semaine": entier 1-7 | null,
  "duree_minutes": entier 20-180 | null,
  "niveau": "débutant"|"occasionnel"|"régulier"|"confirmé"|null,
  "intensite": -1 | 0 | 1 | null,
  "corrections": [{"champ": "...", "ancienne": "...", "nouvelle": "..."}],
- "interpretations": [{"extrait": "...", "comprend": "..."}],
  "precisions": ["question"],
  "question": null | {"type": "pourquoi"|"comparer"|"criteres", "sports": [SPORTS]}
 }
 """
 
 
-def _prompt(vocab: dict, profile: UserProfile) -> str:
+def _history_text(history: list[dict] | None) -> str:
+    """Les derniers échanges (6 au plus) : le modèle comprend les messages qui se répondent."""
+    if not history:
+        return "(début de conversation)"
+    lines = []
+    for m in history[-6:]:
+        who = "Utilisateur" if m.get("role") == "user" else "Assistant"
+        lines.append(f"{who} : {m.get('text', '')[:300]}")
+    return "\n".join(lines)
+
+
+def _prompt(vocab: dict, profile: UserProfile, history=None, top=None) -> str:
     text = (CONTRACT_PROMPT.replace("OBJECTIFS", ", ".join(ALL_GOALS)).replace("FAMILLES", ", ".join(FAMILIES))
             .replace("GROUPES", ", ".join(vocab["groups"])).replace("LIEUX", ", ".join(vocab["places"]))
             .replace("ZONES", ", ".join(ZONES_ALL)).replace("ARTICULATIONS", ", ".join(JOINTS))
@@ -537,12 +557,15 @@ def _prompt(vocab: dict, profile: UserProfile) -> str:
                "categories_exclues": profile.excluded_categories, "sans_eau": profile.no_water,
                "sans_contact": profile.no_contact, "seul_uniquement": profile.only_solo,
                "budget_max_eur": profile.budget_seance_max, "seances_par_semaine": profile.sessions_per_week}
-    return text + "\nProfil actuel (contexte seulement, ne pas le recopier) : " + json.dumps(current, ensure_ascii=False)
+    context = {"profil_actuel": current, "classement_actuel_top3": top or [],
+               "conversation_recente": _history_text(history)}
+    return text + "\nContexte (ne pas le recopier) : " + json.dumps(context, ensure_ascii=False)
 
 
 def llm_contract(message: str, profile: UserProfile, vocab: dict, settings: LLMSettings,
-                 transport: Transport | None = None) -> dict:
-    text = call_llm(_prompt(vocab, profile), f"Message : « {message[:800]} »", settings, json_mode=True, transport=transport)
+                 transport: Transport | None = None, history=None, top=None) -> dict:
+    text = call_llm(_prompt(vocab, profile, history, top), f"Message : « {message[:800]} »", settings,
+                    json_mode=True, transport=transport)
     match = re.search(r"\{.*\}", text or "", flags=re.S)
     if not match:
         raise ValueError("réponse sans JSON")
@@ -550,7 +573,7 @@ def llm_contract(message: str, profile: UserProfile, vocab: dict, settings: LLMS
 
 
 def interpret(message: str, profile: UserProfile, settings: LLMSettings, vocab: dict, engine, *,
-              budget: CallBudget | None = None, transport: Transport | None = None) -> dict:
+              budget: CallBudget | None = None, transport: Transport | None = None, history=None, top=None) -> dict:
     """Lit le message : règles toujours, Gemini si disponible. Retourne contrat validé, rejets, source et note."""
     rules, rules_rej = validate_contract(rules_contract(message, vocab, engine), vocab)
     use_llm = settings.chat_use_llm and settings.provider != "off" and not (
@@ -560,14 +583,15 @@ def interpret(message: str, profile: UserProfile, settings: LLMSettings, vocab: 
         if budget is not None:
             budget.consume()
         try:
-            llm, llm_rej = validate_contract(llm_contract(message, profile, vocab, settings, transport), vocab)
+            llm, llm_rej = validate_contract(llm_contract(message, profile, vocab, settings, transport, history, top), vocab)
             contract = merge_contracts(llm, rules)
             rejected += llm_rej
             source = "IA + règles"
         except (LLMError, ValueError) as e:
             kind = getattr(e, "kind", "réponse illisible")
             get_logger().warning("chatbot : lecture IA indisponible (%s), règles seules", kind)
-            note = "Lecture par règles : l'IA n'était pas disponible."
+            motif = USER_MESSAGES.get(kind, "la réponse de l'IA n'a pas pu être lue")
+            note = f"Lecture par règles : {motif}."
     elif use_llm:
         note = "Lecture par règles : limite d'appels IA atteinte pour cette session."
     return {"contract": contract, "rejected": rejected, "source": source, "note": note}
@@ -971,7 +995,7 @@ HELP_TEXT = ("Décrivez simplement ce que vous voulez, comme vous le diriez à q
 # ------------------------------------------------------------------ point d'entrée
 def process_message(message: str, profile: UserProfile, out: dict, engine, weights: dict | None,
                     settings: LLMSettings, *, budget: CallBudget | None = None,
-                    transport: Transport | None = None) -> dict:
+                    transport: Transport | None = None, history: list[dict] | None = None) -> dict:
     """Traite un message de bout en bout.
 
     kind = "maj"            : profil modifié, moteur relancé (profile, out, changes, interpretations, comparison…)
@@ -985,13 +1009,17 @@ def process_message(message: str, profile: UserProfile, out: dict, engine, weigh
     if question:
         return {"kind": "reponse", "text": answer_question(question, out, profile), "source": "moteur", "note": "",
                 "interpretations": []}
-    read = interpret(message, profile, settings, vocab, engine, budget=budget, transport=transport)
+    top = [r.name for r in out["results"][:3]]
+    read = interpret(message, profile, settings, vocab, engine, budget=budget, transport=transport,
+                     history=history, top=top)
     c = read["contract"]
     base = {"source": read["source"], "note": read["note"], "rejected": read["rejected"],
-            "interpretations": c["interpretations"]}
+            "interpretations": c["interpretations"], "reply": c["reponse"]}
     if c["question"]:
         return {**base, "kind": "reponse", "text": answer_question(c["question"], out, profile)}
     if contract_is_empty(c):
+        if c["reponse"]:
+            return {**base, "kind": "aide", "text": c["reponse"], "precisions": c["precisions"]}
         if c["precisions"]:
             return {**base, "kind": "precision", "text": "", "precisions": c["precisions"]}
         if read["rejected"] and read["source"] != "règles":
@@ -1002,7 +1030,7 @@ def process_message(message: str, profile: UserProfile, out: dict, engine, weigh
     new_profile, changes, contradictions = apply_contract(profile, c)
     if profile_fingerprint(new_profile) == profile_fingerprint(profile):
         return {**base, "kind": "sans_changement", "precisions": c["precisions"],
-                "text": "Votre message est bien compris, mais il ne modifie aucun critère de votre profil : aucun recalcul n'a été nécessaire."}
+                "text": c["reponse"] or "Votre message est bien compris, mais il ne modifie aucun critère de votre profil : aucun recalcul n'a été nécessaire."}
     new_out = engine.recommend(new_profile, weights)  # moteur existant, non dupliqué
     comparison = compare_results(out, new_out)
     n_kept = int(sum(a["retained"] for a in new_out["anatomy"]))
@@ -1011,7 +1039,7 @@ def process_message(message: str, profile: UserProfile, out: dict, engine, weigh
     return {**base, "kind": "maj", "profile": new_profile, "out": new_out, "changes": changes,
             "contradictions": contradictions, "comparison": comparison, "view": profile_view(new_profile),
             "n_kept": n_kept, "suggestions": suggestions, "precisions": c["precisions"],
-            "text": ("Aucun sport du dataset ne respecte toutes vos contraintes." if n_kept == 0 else "")}
+            "text": c["reponse"] or ("Aucun sport du dataset ne respecte toutes vos contraintes." if n_kept == 0 else "Profil mis à jour et classement recalculé.")}
 
 
 def reset_profile(base: UserProfile) -> UserProfile:

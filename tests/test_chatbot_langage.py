@@ -169,5 +169,52 @@ class FreeLanguageWithSimulatedGemini(unittest.TestCase):
         self.assertNotEqual(res["kind"], "maj")
 
 
+class ConversationalReply(unittest.TestCase):
+    """Le modèle répond en langage naturel, avec l'historique de la conversation."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.engine = fixture()["rec"]
+        cls.base = UserProfile(text="Je m'entraîne en salle.", experience="régulier")
+        cls.out = cls.engine.recommend(cls.base, None)
+        cls.settings = LLMSettings(provider="gemini", gemini_key="FAKE-TEST-KEY-000000")
+
+    def test_model_reply_is_returned_to_the_user(self):
+        contract = {"reponse": "Bien noté, je mets de côté les activités nautiques.",
+                    "intention": "mise_a_jour",
+                    "exclusions_strictes": {"groupes": ["sports_aquatiques"]},
+                    "interpretations": [{"extrait": "je n'aime pas l'eau", "comprend": "Pas d'activités dans l'eau."}]}
+        res = bc.process_message("je n'aime pas l'eau", self.base, self.out, self.engine, None, self.settings,
+                                 transport=fake_gemini(contract))
+        self.assertEqual(res["text"], "Bien noté, je mets de côté les activités nautiques.")
+        self.assertEqual(res["kind"], "maj")
+
+    def test_history_is_sent_to_the_model(self):
+        seen = {}
+
+        def spy(url, headers, body, timeout):
+            seen["prompt"] = body["systemInstruction"]["parts"][0]["text"] + body["contents"][0]["parts"][0]["text"]
+            return 200, {"candidates": [{"content": {"parts": [{"text": json.dumps({"reponse": "D'accord."})}]},
+                                         "finishReason": "STOP"}]}
+        history = [{"role": "user", "text": "Je préfère les sports en salle."},
+                   {"role": "assistant", "text": "Noté, je favorise les sports en salle."}]
+        bc.process_message("Et en extérieur, alors ?", self.base, self.out, self.engine, None, self.settings,
+                           transport=spy, history=history)
+        self.assertIn("Je préfère les sports en salle.", seen["prompt"])
+        self.assertIn("Et en extérieur, alors ?", seen["prompt"])
+
+    def test_longe_cote_is_not_a_sea_requirement(self):
+        res = bc.process_message("je n'aime pas le longe cote", self.base, self.out, self.engine, None,
+                                 LLMSettings(provider="off"))
+        self.assertEqual(res["profile"].excluded_infrastructures, [])
+        self.assertIn("Longe-côte", [a["name"] for a in res["out"]["anatomy"] if not a["retained"]])
+
+    def test_dislike_water_excludes_aquatic_group(self):
+        res = bc.process_message("je n'aime pas l'eau", self.base, self.out, self.engine, None,
+                                 LLMSettings(provider="off"))
+        self.assertIn("sports_aquatiques", res["profile"].excluded_groups)
+        self.assertNotIn("Natation en bassin", [a["name"] for a in res["out"]["anatomy"] if a["retained"]])
+
+
 if __name__ == "__main__":
     unittest.main()
