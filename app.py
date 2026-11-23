@@ -113,6 +113,7 @@ if pref:
 if R.disliked_families or R.disliked_formats:
     lines.append("**À éviter (texte)** : " + ", ".join(R.disliked_families + R.disliked_formats))
 cons = [f"impacts : tolérance {R.impact_tol}"]
+if R.injured_joints: cons.append("articulation douloureuse : " + ", ".join(R.injured_joints))
 if R.no_contact: cons.append("sans contact")
 if R.no_water: cons.append("sans eau")
 if R.spare_hard or R.spare_soft: cons.append("zones à ménager : " + ", ".join(R.spare_hard + R.spare_soft))

@@ -5,3 +5,5 @@ data/.cache/
 *.pdf
 .claude/
 data/logs/
+~$*
+data/disciplines.xlsx

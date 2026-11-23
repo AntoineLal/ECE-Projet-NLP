@@ -102,7 +102,7 @@ CONDITION_LEX = [
     ("souplesse", r"raide|manque de souplesse|peu souple|courbatu", -1, "raideur déclarée"),
     ("souplesse", r"tres souple|bonne souplesse|bonne mobilite", +1, "bonne souplesse déclarée"),
 ]
-INJURY = r"blesse|blessure|douleur|mal (?:au|aux|a)|operee?|tendinite|rehabilit|reeduc|convalescen|hernie|entorse|soulag|luxation|fracture|lumbago"
+INJURY = r"fragil|blesse|blessure|douleur|mal (?:au|aux|a)|operee?|tendinite|rehabilit|reeduc|convalescen|hernie|entorse|soulag|luxation|fracture|lumbago"
 GENTLE = r"\bcalmes?\b|\bdoux\b|\bdouces?\b|douceur|tranquille|\blegere?s?\b|sans forcer|apais|menag|sans effort|reeduc|rehabilit|convalescen|soulag"
 WEATHER = r"meteo|pluie|pleut|pleuvoir|pleuv|pluvieu|froid|intemperies|mauvais temps|climat"
 BALANCE = r"vertige|instabilit|tiens? mal sur|tenir mal sur|peur de tomber|desequilibr|je tombe|chutes?\b"
@@ -128,11 +128,25 @@ class TextSignals:
     level_hint: str | None = None
     budget: int | None = None
     injured_zones: set = field(default_factory=set)   # blessure / douleur / rééducation explicite
+    injured_joints: set = field(default_factory=set)  # articulations douloureuses (genou, cheville…)
     gentle: bool = False                               # demande d'une pratique douce
     weather: bool = False                              # sensibilité à la météo
     balance_issue: bool = False                        # équilibre déclaré fragile (vertige, peur de tomber…)
     practice_clauses: list = field(default_factory=list)  # ce que l'utilisateur pratique déjà
     sentences: list = field(default_factory=list)
+
+
+JOINT_LEX = {
+    "genoux": r"genou",
+    "hanches": r"hanche",
+    "chevilles": r"cheville",
+    "pieds": r"pied",
+    "lombaires": r"lombaire|bas du dos|reins?|dos",
+    "cervicales": r"cervical|nuque|cou",
+    "epaules": r"epaule",
+    "coudes": r"coude|epicondyl",
+    "poignets": r"poignet",
+}
 
 
 def _negated(folded: str, start: int, window: int = 28) -> bool:
@@ -178,6 +192,9 @@ def extract_signals(text: str) -> TextSignals:
                     sig.injured_zones.add(zone)
                     sig.spare_zones.add(zone)
                     sig.goal_zones.discard(zone)   # « me soulager l'épaule » n'est pas « renforcer l'épaule »
+            for joint, jrx in JOINT_LEX.items():
+                if re.search(jrx, sent):
+                    sig.injured_joints.add(joint)
     if sig.gentle:
         sig.goals.add("détente")
     if "format:équipe" in sig.prefs or "fam:collectif" in sig.prefs:

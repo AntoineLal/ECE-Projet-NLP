@@ -16,6 +16,8 @@ BLOCK_HELP = {
 # Raison technique du filtre -> phrase claire pour l'utilisateur
 REASON_TEXT = [
     ("contact réglementé", "Vous ne souhaitez pas de sport de contact."),
+    ("contact physique intégré", "Vous ne souhaitez pas de contact physique : ce sport en comporte par nature."),
+    ("charge forte sur une articulation douloureuse", "Vous avez mal à une articulation : ce sport la charge fortement (même si le geste principal sollicite d'autres muscles)."),
     ("pratique dans l'eau", "Vous avez écarté les activités dans l'eau."),
     ("impacts fréquents", "Vos articulations demandent d'éviter les chocs répétés."),
     ("repose sur des sauts", "Vous voulez éviter les sauts."),

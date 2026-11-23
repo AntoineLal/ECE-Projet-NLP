@@ -143,8 +143,7 @@ projet/
 ├── shared.py              # Chargement unique du modèle SBERT et du moteur (cache Streamlit)
 ├── telemetry.py           # Journalisation : runs (JSONL) + logs applicatifs
 ├── data/
-│   ├── disciplines.xlsx   # 106 sports d'origine × 26 champs (+ feuille « Guide des champs »)
-│   ├── disciplines_extra.csv  # 36 sports ajoutés, même schéma (fusionnés au chargement)
+│   ├── sports.xlsx        # dataset unique : 106 sports × 40 champs (+ feuille « Guide des champs »)
 │   ├── .cache/            # embeddings SBERT mis en cache (non versionné)
 │   └── logs/              # runs.jsonl, app.log (non versionnés)
 ├── .streamlit/config.toml
@@ -172,7 +171,7 @@ flowchart TB
     EXT --> PRE
     ENG --> SB
     ENG --> TF[["TF-IDF<br/>scikit-learn"]]
-    ENG --> DATA[("data/disciplines.xlsx + disciplines_extra.csv<br/>106 sports")]
+    ENG --> DATA[("data/sports.xlsx<br/>106 sports")]
 
     TEL --> RUNS[("data/logs/<br/>runs.jsonl · app.log")]
     ADM --> RUNS
@@ -335,11 +334,12 @@ budget, rythme (séances fréquentes + effort/impacts élevés → 0,6).
 
 | Règle | Sport écarté si… |
 |---|---|
-| Contact refusé | contact « réglementé » |
+| Contact refusé | contact physique intégré (niveau 2 ou 3 sur 3) |
 | Eau refusée | catégorie aquatique / nautique / pagaie / rame / voile |
 | Articulations fragiles | impacts = 3 (fréquents) |
 | Sauts à éviter | catégorie « saut » |
 | Intérieur (ou météo) / extérieur | sport pratiqué uniquement dans l'autre environnement |
+| Articulation douloureuse | charge 3 sur l'articulation concernée, ou charge 2 (3 seulement en mode assoupli) |
 | Zone blessée | le sport sollicite cette zone *(assouplie aux sports très doux si moins de 5 sports restent, avec avertissement ⚠)* |
 | Zone à ménager (déclarée) | zone sollicitée **et** (impacts = 3 ou force ≥ 4) |
 | Budget | coût minimal de séance > plafond |
@@ -356,6 +356,8 @@ Ils empêchent qu'une limitation déclarée soit « diluée » dans la moyenne d
 | Impacts fréquents (tolérance moyenne) | ×0,92 |
 | Zone à ménager sollicitée | ×(1 − 0,06 par zone) |
 | Zone blessée sollicitée | ×0,8 (×0,6 en mode assoupli) |
+| Articulation douloureuse, charge faible / modérée | ×0,92 / ×0,6 |
+| Pratique douce + 3 articulations ou plus chargées (≥ 2) | ×0,85 |
 | Pratique douce + intensité ≥ 4 / = 3 | ×0,75 / ×0,92 |
 | Pratique douce + force ≥ 4 / sauts / impacts = 2 | ×0,9 / ×0,85 / ×0,92 |
 | Intensité ≥ 4 alors que la cible ≤ 2,5 | ×0,9 |
@@ -393,7 +395,7 @@ et affiché dans la page Admin.
 
 ## 5. Données
 
-`data/disciplines.xlsx` : **106 disciplines** × 26 champs (voir la feuille « Guide des champs »).
+`data/sports.xlsx` : **106 disciplines** × 40 champs, dataset unique (voir la feuille « Guide des champs »).
 
 | Famille de champs | Exemples |
 |---|---|
@@ -406,6 +408,8 @@ et affiché dans la page Admin.
 
 Pour le sémantique, chaque sport est décrit par **4 textes-blocs** générés à partir de ces champs (condition, objectifs,
 préférences, contraintes), de sorte que chaque bloc de l'utilisateur est comparé à un texte de même nature.
+
+**Articulations.** Chaque sport porte une charge de 0 à 3 sur neuf articulations (genoux, hanches, chevilles, pieds, lombaires, cervicales, épaules, coudes, poignets). Un sport qui sollicite surtout les muscles peut charger fortement une articulation : le ski alpin charge les genoux à 3/3 même si le geste principal sollicite les cuisses. Une douleur au genou exclut donc le ski, comme le football. La **mécanique du geste** (sauts, chutes, contacts, charges lourdes…), le **niveau de contact** (0 à 3) et la **sensibilité à la météo** complètent les contraintes.
 
 > Les annotations sont celles d'un prototype pédagogique, **non validées médicalement**.
 
@@ -423,7 +427,7 @@ Page **Admin** (menu latéral) :
 | 📜 Logs | lecture en direct, filtres, téléchargement |
 | 🗺️ Carte des sports | projection PCA des embeddings, texte utilisateur superposé |
 | 🎛️ Labo de sensibilité | variation des poids et mouvement du classement (▲ ▼ 🆕) |
-| ✅ Tests | **16 scénarios de cohérence** (genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
+| ✅ Tests | **19 scénarios de cohérence** (contact, genou douloureux, pratique seul, genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
 | 🧠 Modèles NLP | comparaison des 4 modèles (scénarios, précision, robustesse, latence, accord), historique des benchmarks, détail par intention, runs de production par modèle |
 | 🧬 Dataset | statistiques et exploration des 106 sports |
 
@@ -444,7 +448,7 @@ L'application permet de choisir le modèle sémantique dans la barre latérale. 
 
 **Mesures** (module `benchmark.py`, jeux de test dans `personas.py` et `gold.py`) :
 
-- **Scénarios** : 16 contraintes strictes (genou fragile, pas de contact, budget…). Ces filtres ne dépendent pas du modèle.
+- **Scénarios** : 19 contraintes strictes (genou fragile, pas de contact, budget…). Ces filtres ne dépendent pas du modèle.
 - **Précision@5** : sur 14 intentions (« je veux me détendre », « sport de ballon en équipe »…), part du top 5 appartenant à la famille attendue.
 - **Robustesse** : sur 5 groupes de 3 formulations d'une même intention, accord moyen des top 5 (indice de Jaccard).
 - **Latence** moyenne et p95, temps de chargement, accord entre modèles.
@@ -453,10 +457,10 @@ L'application permet de choisir le modèle sémantique dans la barre latérale. 
 
 | Modèle | Scénarios | Précision@5 | Robustesse | Latence moyenne |
 |---|---|---|---|---|
-| TF-IDF seul | 16/16 | 0,66 | 0,32 | ~35 ms |
-| SBERT MiniLM (défaut) | 16/16 | 0,71 | 0,41 | ~120 ms |
-| CamemBERT | 16/16 | 0,73 | 0,41 | ~230 ms |
-| MPNet multilingue | 16/16 | 0,73 | 0,38 | ~220 ms |
+| TF-IDF seul | 19/19 | 0,64 | 0,32 | ~40 ms |
+| SBERT MiniLM (défaut) | 19/19 | 0,71 | 0,41 | ~125 ms |
+| CamemBERT | 19/19 | 0,71 | 0,41 | ~240 ms |
+| MPNet multilingue | 19/19 | 0,71 | 0,38 | ~220 ms |
 
 **Lecture honnête** : les contraintes ne départagent pas les modèles (elles sont traitées par des règles). Les écarts
 de précision et de robustesse sont faibles, et le jeu compte 14 intentions : un écart inférieur à 0,05 n'est pas

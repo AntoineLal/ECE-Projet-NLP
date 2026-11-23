@@ -22,8 +22,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from extraction import TextSignals, extract_signals, route_sentences
 from preprocess import fold, preprocess_str
 
-DATA_PATH = Path(__file__).parent / "data" / "disciplines.xlsx"
-EXTRA_PATH = Path(__file__).parent / "data" / "disciplines_extra.csv"   # sports ajoutés, même schéma
+DATA_PATH = Path(__file__).parent / "data" / "sports.xlsx"   # dataset unique
+JOINTS = ["genoux", "hanches", "chevilles", "pieds", "lombaires", "cervicales", "epaules", "coudes", "poignets"]
 CACHE_DIR = Path(__file__).parent / "data" / ".cache"
 
 BLOCKS = ["condition", "objectifs", "preferences", "contraintes"]
@@ -131,6 +131,7 @@ class Resolved:
     notes: list
     sources: dict
     balance_issue: bool = False
+    injured_joints: list = field(default_factory=list)
 
 
 @dataclass
@@ -147,9 +148,6 @@ class Result:
 
 def load_sports() -> pd.DataFrame:
     df = pd.read_excel(DATA_PATH, sheet_name="Disciplines")
-    if EXTRA_PATH.exists():
-        extra = pd.read_csv(EXTRA_PATH, encoding="utf-8")
-        df = pd.concat([df, extra[df.columns]], ignore_index=True)
     for c in ["categories", "zones_corps_sollicitees", "capacites_principales", "objectifs", "format_pratique",
               "environnement", "equipement", "mots_cles"]:
         df[c + "_l"] = df[c].apply(_split)
@@ -288,7 +286,7 @@ class Recommender:
                         disliked_families=sorted(dislike_fam), disliked_formats=sorted(disliked_formats),
                         impact_tol=tol, spare_hard=sorted(set(p.spare_zones) | sig.injured_zones),
                         spare_soft=sorted(set(sig.spare_zones) - set(p.spare_zones) - sig.injured_zones),
-                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, balance_issue=sig.balance_issue, no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
+                        no_contact=no_contact, no_water=no_water, no_jump="no_jump" in sig.constraints, injured=sorted(sig.injured_zones), gentle=sig.gentle, balance_issue=sig.balance_issue, injured_joints=sorted(sig.injured_joints), no_outdoor=(no_out or weather_indoor) and p.environnement != "extérieur",
                         no_indoor=no_in and p.environnement != "intérieur",
                         target_intensity=target, notes=notes, sources=src)
 
@@ -298,8 +296,8 @@ class Recommender:
         reasons: dict[str, list[str]] = {}
         for i, r in self.df.iterrows():
             why = []
-            if R.no_contact and r.contact == "réglementé":
-                why.append("contact réglementé")
+            if R.no_contact and r.niveau_contact >= 2:
+                why.append("contact physique intégré à la pratique")
             if R.no_water and (set(r.categories_l) & WATER_TAGS):
                 why.append("pratique dans l'eau")
             if R.no_jump and "saut" in r.categories_l:
@@ -321,6 +319,10 @@ class Recommender:
                 why.append("sollicite la zone blessée (" + ", ".join(sorted(inj)) + ") sans être assez doux")
             elif ov and (r.impacts_1_3 >= 3 or r.force_1_5 >= 4):
                 why.append("sollicite fortement une zone à ménager (" + ", ".join(sorted(ov)) + ")")
+            # articulations douloureuses : charge 2 exclue (3 en mode assoupli), charge 3 toujours exclue
+            bad_j = [j for j in R.injured_joints if int(r[f"art_{j}"]) >= (3 if relax_injury else 2)]
+            if bad_j:
+                why.append("charge forte sur une articulation douloureuse (" + ", ".join(bad_j) + ")")
             if R.gentle and r.impacts_1_3 >= 3:
                 why.append("impacts marqués alors que vous cherchez une pratique douce")
             if R.gentle and r.intensite_loisir_1_5 >= 4:
@@ -431,6 +433,11 @@ class Recommender:
         if R.p.sessions_per_week >= 4 and (imp == 3 or r.intensite_loisir_1_5 == 5):
             cs.append(0.6)
             det["contraintes"].append(("séances fréquentes + effort/impacts élevés : récupération", 0.6))
+        for j in R.injured_joints:
+            load = int(r[f"art_{j}"])
+            s = {0: 1.0, 1: 0.85, 2: 0.5, 3: 0.0}[load]
+            cs.append(s)
+            det["contraintes"].append((f"charge sur les {j} : {load}/3", s))
         cons = float(np.mean(cs))
         return {"condition": cond, "objectifs": obj, "preferences": pref, "contraintes": cons}, det
 
@@ -463,8 +470,21 @@ class Recommender:
             f *= 0.9; why.append("effort de force marqué pour une pratique douce (×0,9)")
         if R.gentle and "saut" in r.categories_l:
             f *= 0.85; why.append("sauts : peu compatibles avec une pratique douce (×0,85)")
+        n_loaded = sum(int(r[f"art_{j}"]) >= 2 for j in JOINTS)
+        if R.gentle and n_loaded >= 3:
+            f *= 0.85; why.append(f"{n_loaded} articulations fortement chargées pour une pratique douce (×0,85)")
         if R.gentle and r.impacts_1_3 == 2:
             f *= 0.92; why.append("impacts présents pour une pratique douce (×0,92)")
+        if R.impact_tol == "faible":
+            n3 = sum(int(r[f"art_{j}"]) == 3 for j in JOINTS)
+            if n3:
+                f *= 0.92 ** n3; why.append(f"{n3} articulation(s) très chargée(s) (×{0.92 ** n3:.2f})")
+        for j in R.injured_joints:
+            load = int(r[f"art_{j}"])
+            if load == 1:
+                f *= 0.92; why.append(f"charge faible sur les {j} (×0,92)")
+            elif load == 2:
+                f *= 0.6; why.append(f"⚠ charge modérée sur les {j}, zone douloureuse : à valider avec un professionnel de santé (×0,6)")
         inj = set(_n(z) for z in R.injured) & set(r.zones_corps_sollicitees_l)
         if inj:
             if getattr(R, "relaxed", False):
@@ -530,7 +550,7 @@ class Recommender:
 
         R = self.resolve(p); lap("extraction")
         keep, excluded = self.filter_hard(R)
-        if keep.sum() < top_k and R.injured:
+        if keep.sum() < top_k and (R.injured or R.injured_joints):
             keep, excluded = self.filter_hard(R, relax_injury=True)
             R.relaxed = True
             R.notes.append("Peu d'activités sans sollicitation de la zone blessée : sports très doux assouplis acceptés")
@@ -565,7 +585,8 @@ class Recommender:
         inj_set = {_n(z) for z in R.injured}
 
         def touches_injury(i):
-            return bool(inj_set & set(self.df.loc[i, "zones_corps_sollicitees_l"]))
+            return bool(inj_set & set(self.df.loc[i, "zones_corps_sollicitees_l"])) or any(
+                int(self.df.loc[i, f"art_{j}"]) >= 2 for j in R.injured_joints)
         order = sorted([x for x in rows if keep[x[0]]], key=lambda x: (touches_injury(x[0]), -x[1]))
         results = []
         for i, tot, blocks, st, det in order[:top_k]:

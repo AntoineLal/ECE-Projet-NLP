@@ -64,4 +64,13 @@ PERSONAS = [
     ("Budget nul : seulement des activités sans coût de séance",
      "Mon budget est de 0 euro, je veux marcher et me promener dehors.",
      lambda o, df: bool((_top(o, df).budget_seance_min_eur <= 0).all())),
+    ("Genou douloureux : aucun sport qui charge fortement le genou, même s'il sollicite surtout les cuisses (ski…)",
+     "J'ai mal au genou, je voudrais faire du ski.",
+     lambda o, df: bool((_top(o, df).art_genoux <= 1).all())),
+    ("Contact refusé : aucun sport à contact physique intégré",
+     "Je ne veux aucun contact physique avec les autres, je préfère un sport calme.",
+     lambda o, df: bool((_top(o, df).niveau_contact <= 1).all())),
+    ("Pratique seul : au moins 4 sports praticables seul dans le top 5",
+     "Je préfère pratiquer seul, sans équipe, en intérieur.",
+     lambda o, df: int(_top(o, df).solo_possible.sum()) >= 4),
 ]
