@@ -491,60 +491,58 @@ La réponse est **vérifiée** avant affichage (`bonus_llm.validate_text`) :
 Si l'IA est absente, si le quota est épuisé, si le fournisseur est en erreur ou si la réponse est rejetée, l'application
 affiche **l'explication classique déjà produite par le moteur**, avec la raison du repli.
 
-### Bonus B : chatbot adaptatif qui relance le moteur NLP
+### Bonus B : assistant qui comprend un besoin formulé librement
 
-Le chatbot ne remplace ni SBERT, ni TF-IDF, ni le scoring : il **modifie le profil**, puis **relance le moteur existant**.
-Le chemin d'un message est le suivant.
+L'assistant ne reconnaît pas des phrases toutes faites : il comprend ce que l'utilisateur veut dire, puis le traduit en
+filtres du moteur. La conversation est dans la **barre latérale**, à côté des résultats.
 
 ```
-message → lecture (règles + Gemini en JSON strict) → contrat validé → fusion dans le profil
-        → engine.recommend (filtres stricts AVANT le classement, puis scores SBERT/TF-IDF) → comparaison avant / après
+phrase libre → compréhension (règles + Gemini en JSON strict) → contrat validé → « ce que j'ai compris »
+             → profil mis à jour (exclusions strictes / préférences souples) → moteur existant → top 3 expliqué
 ```
 
-**1. Lecture.** Un *contrat* aux champs fixes décrit le message : objectifs ajoutés, préférences souples, exclusions
-strictes, acceptations (levées d'exclusion), contraintes physiques, budget, séances, durée, niveau, intensité, corrections.
-Les règles (`rules_contract`) lisent toujours le message. Gemini (`llm_contract`) renvoie le même contrat en JSON. Les deux
-sont fusionnés. Si Gemini est indisponible, les règles suffisent.
+**Exemples de phrases comprises** (testées dans `tests/test_chatbot_langage.py`) :
 
-**2. Validation stricte** (`validate_contract`). Une clé inconnue (`score_global`…), une valeur hors liste (un sport qui
-n'existe pas, une famille inventée) ou hors bornes (15 séances par semaine) est **rejetée et signalée** : elle n'atteint
-jamais le profil. Les listes de sports et de catégories viennent du dataset lui-même.
-
-**3. Distinction essentielle.**
-
-| Type | Exemples | Effet dans le moteur |
+| Phrase | Ce que le chatbot comprend | Effet |
 |---|---|---|
-| Exclusion **stricte** | « je ne veux aucun sport aquatique », « uniquement individuels », « sans course à pied » | filtre dur : le sport n'est jamais classé |
-| Préférence **souple** | « je préfère l'extérieur », « j'aime les sports de ballon » | critère de score : favorise, n'exclut pas |
-| Acceptation | « finalement j'accepte les sports collectifs » | lève l'exclusion correspondante |
-| Correction | « finalement intérieur » après « extérieur » | remplace l'ancienne valeur, signalée comme contradiction résolue |
+| « Je n'ai pas de mer à côté de chez moi, donc éviter le surf, le longe-côte… » | lieu indisponible : bord de mer | exclut les sports qui ont besoin de la mer |
+| « Je n'ai pas de stade à côté de chez moi. » | lieu indisponible : stade ou piste | exclut football, rugby, sprint, lancer du poids… |
+| « Je n'aime pas les sports de balle. » | groupe refusé : sports de balle | exclut football, basket, tennis… |
+| « J'adore les sports de combat. » | groupe apprécié | favorise judo, boxe… sans les imposer |
+| « Pas de piscine près de chez moi. » | lieu indisponible : piscine | exclut la natation en bassin |
+| « Je ne sais pas nager. » | refus de l'eau | exclut les activités dans l'eau |
+| « Je veux seulement des sports individuels en intérieur. » | pratique seul, préférence intérieur | exclut les collectifs, favorise l'intérieur |
+| « Vivre loin de tout point d'eau salée me pose problème. » | (Gemini) lieu indisponible : mer | exclut les sports de mer |
 
-**4. Fusion sans effacement** (`apply_contract`). Ce qui n'est pas mentionné est conservé. Une exclusion retire la
-préférence opposée, et une acceptation lève l'exclusion. Le message n'est plus ajouté au texte du profil : les anciennes
-phrases ne peuvent donc plus contredire une modification récente.
+Les phrases ambiguës ne sont pas devinées : « Je n'aime pas le sport » donne lieu à une question, et une demande que
+l'IA ne sait pas rattacher à une option connue est reformulée avec la partie non comprise.
 
-**5. Recalcul.** Si le profil change, `engine.recommend` est relancé. Si le message ne change aucun critère, aucun recalcul
-n'a lieu (`sans_changement`).
+**Ce qui est strict et ce qui est souple.**
+- *Exclusions strictes* (« pas de », « aucun », « sans », « uniquement », « je n'aime pas ») : le sport n'est jamais classé.
+- *Préférences souples* (« j'aime », « je préfère », « plutôt ») : elles favorisent un sport dans le score, sans l'exclure.
+- *Acceptations* (« finalement j'accepte les collectifs ») : elles lèvent l'exclusion correspondante.
 
-**6. Aucun sport admissible.** Le moteur ne relâche jamais une contrainte. `diagnose_empty` indique seulement ce qui
-redonnerait des sports admissibles (« exclusion de la catégorie course : 7 sport(s) redeviendraient admissibles »), et
-l'utilisateur décide.
+**Vocabulaire contrôlé.** Un lieu (27 possibilités : mer, plan d'eau, piscine, stade, gymnase, court, dojo, neige,
+piste cyclable, rue et parc…) et un groupe de sports (sports de balle, de combat, aquatiques, de glisse, de raquette,
+course à pied, danse, cyclisme…) sont des vocabulaires fermés. Gemini ne peut pas inventer un lieu : une valeur inconnue
+est rejetée et signalée. Chaque sport du dataset porte la liste de ses **infrastructures** (colonne `infrastructures`
+de `data/sports.xlsx`) : un sport est praticable si au moins un de ses lieux est disponible.
 
-**7. Interface.** Après chaque modification, la conversation affiche : le profil actualisé (objectifs retenus, préférences
-souples, contraintes strictes), les changements depuis la dernière réponse, les contradictions résolues, puis le nouveau
-top 3 avec score global, critères de correspondance, et les raisons de l'entrée ou de la sortie de chaque sport. Le bouton
-« Réinitialiser les modifications de la conversation » revient au profil du questionnaire, sans l'effacer. Un nouvel envoi
-du questionnaire remet la conversation à zéro, en l'annonçant.
+**Ce que voit l'utilisateur** (barre latérale) : pour chaque message, « 🧠 Ce que j'ai compris » (une phrase par élément
+compris), puis le profil actualisé (objectifs, préférences souples, contraintes strictes), les changements, les
+contradictions résolues, et le nouveau top 3 avec score global, critères et raisons d'entrée ou de sortie. Un message qui
+ne change rien ne relance pas le moteur. Le bouton « Réinitialiser les modifications de la conversation » revient au
+profil du questionnaire sans l'effacer.
+
+**Ce qui n'a pas changé.** Le moteur NLP (SBERT, TF-IDF, scoring, classement) n'est pas modifié. Le chatbot ne fait que
+construire des filtres et des préférences. Les seules nouveautés du moteur sont des exclusions explicites (lieux, groupes)
+et une préférence souple par groupe ; l'assouplissement automatique des blessures a été supprimé.
 
 **Démonstration avant / après** (test `test_before_after_demonstration`, moteur TF-IDF, profil « je m'entraîne en salle ») :
 
 - Message : « Je ne veux aucun sport aquatique, je veux uniquement des sports individuels et je préfère l'extérieur. »
 - Avant : Kickboxing · Triathlon · Aïkido · Escalade de bloc · Street workout
 - Après : Street workout · Lancer du poids · Cyclisme sur piste · Lancer du javelot · Ski alpin
-- Sorties : Kickboxing, Triathlon, Aïkido (exclus ou rétrogradés par les nouvelles exclusions)
-
-Le moteur NLP a fonctionné sans modification de son calcul : seuls des champs d'exclusion ont été ajoutés, et l'assouplissement
-automatique des blessures a été supprimé (il réintroduisait silencieusement des sports exclus).
 
 ### Pourquoi le LLM ne remplace pas les calculs
 
@@ -600,7 +598,7 @@ python -m unittest discover -s tests -v
 Les tests utilisent un LLM **simulé** (faux transport) et un serveur HTTP local qui imite l'API Gemini : aucun quota n'est
 consommé. Ils s'exécutent avec le moteur TF-IDF, dont les règles de filtrage et de score sont identiques à celles de SBERT.
 
-**Résultat de la dernière exécution** : **46 tests, tous réussis**. Le fichier `tests/test_bonus.py` couvre le bonus A
+**Résultat de la dernière exécution** : **63 tests, tous réussis**. Le fichier `tests/test_bonus.py` couvre le bonus A
 et le transport HTTP ; le fichier `tests/test_chatbot.py` couvre le bonus B. Pour le bonus B, les 8 scénarios obligatoires
 sont testés avec un Gemini simulé : (1) aucun sport aquatique, (2) uniquement des sports individuels, (3) préférence
 d'extérieur souple, (4) impacts élevés filtrés, (5) acceptation des collectifs qui lève l'exclusion, (6) endurance sans

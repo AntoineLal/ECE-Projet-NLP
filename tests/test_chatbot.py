@@ -279,7 +279,7 @@ class ChatScenarios(unittest.TestCase):
         settings = LLMSettings(provider="gemini", gemini_key="FAKE-TEST-KEY-000000")
         res = bc.process_message("Je ne veux aucun sport aquatique.", p, o, self.engine, None, settings, transport=broken)
         self.assertEqual(res["kind"], "maj")
-        self.assertTrue(res["profile"].no_water)
+        self.assertTrue(res["profile"].no_water or "sports_aquatiques" in res["profile"].excluded_groups)
         self.assertIn("règles", res["note"])
 
     def test_ambiguous_message_asks_clarification(self):

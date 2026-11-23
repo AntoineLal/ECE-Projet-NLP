@@ -176,12 +176,14 @@ for rank, res in enumerate(results, 1):
                        f"équipement : {r.equipement.replace('|', ', ')}")
         bonus_ui.render_explain_button(out, res, llm_settings)
 
-# ---------------------------------------------------------------- conversation (bonus B)
-st.divider()
-st.header("💬 Affiner avec l'assistant")
-if st.session_state.pop("chat_reset_notice", False):
-    st.info("Nouveau questionnaire : les modifications faites dans la conversation ont été remises à zéro.")
-bonus_ui.render_chat(out, profile, engine, weights, llm_settings)
+# ---------------------------------------------------------------- conversation (bonus B) : colonne latérale
+# La conversation est affichée dans la barre latérale, pour rester visible pendant la lecture des résultats.
+with st.sidebar:
+    st.divider()
+    st.subheader("💬 Assistant")
+    if st.session_state.pop("chat_reset_notice", False):
+        st.info("Nouveau questionnaire : les modifications faites dans la conversation ont été remises à zéro.")
+    bonus_ui.render_chat(out, profile, engine, weights, llm_settings)
 
 # ---------------------------------------------------------------- pourquoi ?
 st.divider()

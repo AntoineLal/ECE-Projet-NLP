@@ -43,6 +43,58 @@ ALL_GOALS = ["endurance", "force", "souplesse", "équilibre", "coordination", "d
              "précision", "agilité", "jeu collectif", "plein air", "progression technique", "expression corporelle"]
 
 WATER_TAGS = {"sport aquatique", "sport nautique", "glisse sur l'eau", "nage", "pagaie", "rame", "navigation à voile"}
+# Groupes de sports reconnus par le chatbot (« sports de balle », « sports de combat »…) : ensembles de catégories
+GROUPS = {
+    "sports_de_balle": {"jeu de ballon", "jeu de balle", "jeu de batte", "jeu de crosse", "sport de raquette"},
+    "sports_collectifs": {"sport collectif"},
+    "sports_de_raquette": {"sport de raquette"},
+    "sports_de_combat": {"sport de combat", "combat de percussion", "combat de préhension", "sport de contact"},
+    "sports_de_glisse": {"glisse sur neige", "glisse sur glace", "glisse sur roulettes", "glisse sur l'eau"},
+    "sports_aquatiques": set(WATER_TAGS),
+    "sports_equestres": {"équitation"},
+    "sports_de_cible": {"sport de cible"},
+    "course_a_pied": {"course"},
+    "danse": {"danse", "chorégraphie"},
+    "cyclisme": {"cyclisme"},
+    "gymnastique": {"gymnastique", "acrobatie"},
+    "escalade": {"escalade"},
+    "sports_de_contact": {"sport de contact"},
+}
+INFRA_DEFS = {
+    'mer': 'bord de mer, plage ou littoral',
+    'plan_eau': "lac, rivière, plan d'eau ou canal",
+    'piscine': 'piscine ou bassin couvert ou extérieur',
+    'stade': "stade, terrain de sport en plein air ou piste d'athlétisme",
+    'gymnase': 'gymnase ou salle omnisport',
+    'court': 'court de tennis, padel, squash, pickleball ou badminton',
+    'fronton': 'fronton ou mur de jeu',
+    'salle_musculation': 'salle de musculation ou box de crossfit',
+    'cardio_salle': 'salle de fitness avec machines cardio ou cours collectifs à vélo',
+    'dojo': "dojo, salle d'arts martiaux, de boxe ou d'armes",
+    'studio_danse': 'studio ou salle de danse',
+    'espace_calme': 'salle calme, studio de yoga ou espace de pratique douce',
+    'neige': 'station de ski, domaine nordique ou montagne enneigée',
+    'glace': 'patinoire ou piste de glace',
+    'mur_escalade': "salle d'escalade ou mur artificiel",
+    'paroi_naturelle': 'falaise, paroi rocheuse ou via ferrata en montagne',
+    'route': 'route ou itinéraire routier ouvert à la pratique',
+    'piste_cyclable': 'voie verte ou piste cyclable',
+    'velodrome': 'vélodrome, piste lisse ou circuit fermé',
+    'manege': 'manège ou centre équestre',
+    'skatepark': 'skatepark',
+    'bowling_billard': 'bowling, salle de billard ou bar avec jeux',
+    'stand_tir': 'stand de tir',
+    'boulodrome': 'boulodrome ou terrain stabilisé',
+    'parcours_golf': "parcours de golf ou green d'entraînement",
+    'nature': 'sentiers, forêt ou terrain naturel',
+    'rue_parc': 'rues, parcs, playgrounds ou espaces publics',
+}
+GROUP_LABEL = {"sports_de_balle": "sports de balle", "sports_collectifs": "sports collectifs",
+               "sports_de_raquette": "sports de raquette", "sports_de_combat": "sports de combat",
+               "sports_de_glisse": "sports de glisse", "sports_aquatiques": "sports aquatiques",
+               "sports_equestres": "sports équestres", "sports_de_cible": "sports de cible",
+               "course_a_pied": "course à pied", "danse": "danse", "cyclisme": "cyclisme",
+               "gymnastique": "gymnastique", "escalade": "escalade", "sports_de_contact": "sports de contact"}
 FAMILIES = {
     "Sports collectifs": {"sport collectif"},
     "Sports de ballon": {"jeu de ballon"},
@@ -113,6 +165,9 @@ class UserProfile:
     env_preference: str | None = None
     # --- articulations douloureuses déclarées dans la conversation
     injured_joints: list = field(default_factory=list)
+    excluded_infrastructures: list = field(default_factory=list)  # lieux indisponibles (mer, stade, piscine…)
+    excluded_groups: list = field(default_factory=list)           # groupes de sports refusés (clés de GROUPS)
+    liked_groups: list = field(default_factory=list)              # groupes de sports appréciés (préférence souple)
 
 
 @dataclass
@@ -145,6 +200,9 @@ class Resolved:
     sources: dict
     balance_issue: bool = False
     injured_joints: list = field(default_factory=list)
+    excluded_infrastructures: list = field(default_factory=list)  # lieux indisponibles (mer, stade, piscine…)
+    excluded_groups: list = field(default_factory=list)           # groupes de sports refusés (clés de GROUPS)
+    liked_groups: list = field(default_factory=list)              # groupes de sports appréciés (préférence souple)
 
 
 @dataclass
@@ -162,7 +220,7 @@ class Result:
 def load_sports() -> pd.DataFrame:
     df = pd.read_excel(DATA_PATH, sheet_name="Disciplines")
     for c in ["categories", "zones_corps_sollicitees", "capacites_principales", "objectifs", "format_pratique",
-              "environnement", "equipement", "mots_cles"]:
+              "environnement", "equipement", "mots_cles", "infrastructures"]:
         df[c + "_l"] = df[c].apply(_split)
     df["contact"] = df["contact"].astype(str).str.strip().str.lower()
     return df
@@ -366,6 +424,13 @@ class Recommender:
             why.append("famille exclue : " + ", ".join(f for f in p.excluded_families if {_n(t) for t in FAMILIES.get(f, set())} & set(r.categories_l)))
         if p.excluded_formats and set(r.format_pratique_l) <= set(p.excluded_formats):
             why.append("pratiqué uniquement en " + " ou ".join(r.format_pratique_l))
+        needed = set(r.infrastructures_l)
+        if needed and needed <= set(p.excluded_infrastructures):
+            why.append("nécessite " + " ou ".join(sorted(needed)) + " (indisponible pour vous)")
+        for g in p.excluded_groups:
+            hit = sorted(set(r.categories_l) & GROUPS.get(g, set()))
+            if hit:
+                why.append("groupe exclu : " + GROUP_LABEL.get(g, g))
         if p.only_solo and "individuel" not in r.format_pratique_l:
             why.append("pratique seul impossible (uniquement " + " ou ".join(r.format_pratique_l) + ")")
         if p.excluded_environments and set(r.environnement_l) <= set(p.excluded_environments):
@@ -440,6 +505,10 @@ class Recommender:
             hit = [f for f in R.families if {_n(t) for t in FAMILIES[f]} & tags]
             ps.append(1.0 if hit else 0.0)
             det["preferences"].append(("famille " + (", ".join(hit) if hit else "non appréciée"), float(bool(hit))))
+        if R.p.liked_groups:
+            hit = [g for g in R.p.liked_groups if set(r.categories_l) & GROUPS.get(g, set())]
+            ps.append(1.0 if hit else 0.0)
+            det["preferences"].append(("groupe apprécié : " + (", ".join(GROUP_LABEL.get(g, g) for g in hit) or "non"), float(bool(hit))))
         bad = [f for f in R.disliked_families if {_n(t) for t in FAMILIES[f]} & set(r.categories_l)]
         bad += [f for f in R.disliked_formats if f in r.format_pratique_l]
         if bad:

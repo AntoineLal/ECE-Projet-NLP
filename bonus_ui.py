@@ -109,7 +109,12 @@ def render_chat(out: dict, profile, engine, weights: dict, settings: LLMSettings
             st.markdown(ASSISTANT_INTRO)
     for m in chat:
         with st.chat_message(m["role"]):
-            st.markdown(m["text"])
+            if m.get("interpretations"):
+                with st.expander("🧠 Ce que j'ai compris", expanded=True):
+                    for i in m["interpretations"]:
+                        st.write("• " + i["comprend"])
+            if m.get("text"):
+                st.markdown(m["text"])
             if m.get("tag"):
                 st.caption(m["tag"])
             if m.get("card"):
@@ -138,9 +143,9 @@ def render_chat(out: dict, profile, engine, weights: dict, settings: LLMSettings
                 "suggestions": res["suggestions"], "comparison": res["comparison"],
                 "top": bc.top_summary(res["out"])}
         chat.append({"role": "assistant", "text": "Profil mis à jour et classement recalculé.", "tag": tag,
-                     "card": card, "kind": "maj"})
+                     "card": card, "kind": "maj", "interpretations": res["interpretations"]})
         st.session_state["profile"] = res["profile"]
         st.rerun()  # la page est relancée : le top 5 affiché correspond au nouveau profil
     chat.append({"role": "assistant", "text": res["text"], "tag": tag, "kind": res["kind"],
-                 "precisions": res.get("precisions", [])})
+                 "precisions": res.get("precisions", []), "interpretations": res.get("interpretations", [])})
     st.rerun()
