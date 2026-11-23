@@ -82,7 +82,8 @@ PREF_LEX = {
     "fam:salle": r"musculation|crossfit|spinning|zumba|elliptique|rameur|tapis de course|cardio",
 }
 
-PREF_CUE = r"prefer|aime|adore|plutot|envie|attir|passionn|pratiquer|deteste|interess|collectif|individuel"
+PREF_CUE = (r"prefer|aime|adore|plutot|envie|attir|passionn|pratiquer|deteste|interess|\bcollectif|individuel"
+            r"|\bveux\b|voudrais|souhait|cherche|aimerais|\brev")
 
 CONSTRAINT_LEX = {
     "no_contact": r"(?:pas|sans|aucun|evit\w+)\W+(?:\w+\W+){0,3}(?:contact|combat|bagarre)",
@@ -140,9 +141,9 @@ JOINT_LEX = {
     "genoux": r"genou",
     "hanches": r"hanche",
     "chevilles": r"cheville",
-    "pieds": r"pied",
-    "lombaires": r"lombaire|bas du dos|reins?|dos",
-    "cervicales": r"cervical|nuque|cou",
+    "pieds": r"\bpied",
+    "lombaires": r"lombaire|bas du dos|\breins?\b|\bdos\b",
+    "cervicales": r"cervical|nuque|\bcou\b",
     "epaules": r"epaule",
     "coudes": r"coude|epicondyl",
     "poignets": r"poignet",
@@ -210,7 +211,7 @@ def extract_signals(text: str) -> TextSignals:
         if re.search(rx, t):
             sig.level_hint = lvl
     m = re.search(r"(\d{1,3})\s*(?:euros?|€)", t)
-    if m and re.search(r"budget|maximum|max|pas plus|au plus|jusqu'a|moins de|par seance|la seance", t):
+    if m and re.search(r"budget|maximum|max\b|pas plus|au plus|jusqu'a|moins de|par seance|la seance", t):
         sig.budget = int(m.group(1))
     sig.prefs -= sig.disliked
     if "no_contact" in sig.constraints:

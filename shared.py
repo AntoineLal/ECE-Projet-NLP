@@ -9,12 +9,10 @@ import streamlit as st
 from engine import Recommender
 from telemetry import get_logger
 
-# Modèles comparés. hf=None : TF-IDF seul, sans réseau de neurones.
+# Les deux modèles comparés. hf=None : TF-IDF seul, sans réseau de neurones.
 MODELS = {
     "tfidf": {"label": "TF-IDF seul (lexical)", "hf": None},
     "minilm": {"label": "SBERT MiniLM multilingue", "hf": "paraphrase-multilingual-MiniLM-L12-v2"},
-    "camembert": {"label": "CamemBERT (sentence-camembert, français)", "hf": "dangvantuan/sentence-camembert-base"},
-    "mpnet": {"label": "MPNet multilingue", "hf": "paraphrase-multilingual-mpnet-base-v2"},
 }
 DEFAULT_MODEL = "minilm"
 
@@ -55,7 +53,7 @@ def build_engine(key: str):
         return Recommender(None), str(e), time.perf_counter() - t
 
 
-@st.cache_resource(show_spinner="Chargement du modèle et indexation des 106 sports…")
+@st.cache_resource(show_spinner="Chargement du modèle et indexation des sports…")
 def get_engine(key: str = DEFAULT_MODEL):
     """Retourne (moteur, erreur, secondes de démarrage) pour le modèle choisi, en cache."""
     return build_engine(key)

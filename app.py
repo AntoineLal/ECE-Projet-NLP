@@ -5,7 +5,9 @@ Lancement :  streamlit run app.py
 import plotly.graph_objects as go
 import streamlit as st
 
+import bonus_ui
 import explain_ui
+from llm_config import load_settings
 from shared import DEFAULT_MODEL, MODELS, get_engine, model_label
 from telemetry import get_logger, log_run
 from engine import (BLOCK_LABELS, BLOCKS, CAP_LABEL, DEFAULT_WEIGHTS, EXPERIENCE, 
@@ -28,6 +30,8 @@ with st.sidebar:
                              format_func=model_label, key="model_key")
     engine, sbert_error, boot_s = get_engine(model_key)
     st.caption("Modèle sémantique : " + (model_label(model_key) if engine.embedder else "TF-IDF seul (modèle indisponible)"))
+    llm_settings = load_settings()
+    st.caption("IA générative (bonus) : " + llm_settings.describe())
     if sbert_error:
         st.warning("Le modèle n'a pas pu être chargé : " + sbert_error[:150])
     with st.expander("Pondération des blocs"):
@@ -40,7 +44,7 @@ with st.sidebar:
             "d'exercices. Consultez un professionnel de santé en cas de doute.")
 
 st.title("🏃 Quel sport est fait pour vous ?")
-st.write("Décrivez votre profil, nous le comparons sémantiquement à **106 disciplines** et vous proposons le **top 5**.")
+st.write(f"Décrivez votre profil, nous le comparons sémantiquement à **{len(engine.df)} disciplines** et vous proposons le **top 5**.")
 
 if "txt" not in st.session_state:
     st.session_state.txt = ""
@@ -138,6 +142,8 @@ with st.expander("🧪 Prétraitement et signaux détectés dans le texte"):
 # ---------------------------------------------------------------- top 5
 st.divider()
 st.header("🏆 Vos 5 sports recommandés")
+if st.session_state.get("profile_history"):
+    st.caption("Classement recalculé après vos modifications dans la conversation.")
 if not results:
     st.error("Aucune activité ne satisfait toutes vos contraintes. Assouplissez-en certaines.")
     st.stop()
@@ -162,6 +168,13 @@ for rank, res in enumerate(results, 1):
             st.caption(f"Budget séance {int(r.budget_seance_min_eur)}–{int(r.budget_seance_max_eur)} € · "
                        f"matériel {int(r.budget_equipement_min_eur)}–{int(r.budget_equipement_max_eur)} € · "
                        f"équipement : {r.equipement.replace('|', ', ')}")
+        bonus_ui.render_explain_button(out, res, llm_settings)
+
+# ---------------------------------------------------------------- conversation (bonus B)
+st.divider()
+st.header("💬 Affiner avec l'assistant")
+bonus_ui.render_profile_panel()
+bonus_ui.render_chat(out, profile, engine, weights, llm_settings)
 
 # ---------------------------------------------------------------- pourquoi ?
 st.divider()
@@ -182,7 +195,7 @@ with t1:
     st.plotly_chart(fig, use_container_width=True)
     st.caption(f"⏱ Analyse réalisée en {out['timings']['total']:.0f} ms.")
     st.caption("Score d'un bloc = 40 % score structuré (déduit du texte et des échelles) + 60 % similarité "
-               "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur les 106 sports). Total = somme pondérée des blocs.")
+               "sémantique (70 % SBERT + 30 % TF-IDF, normalisée sur tous les sports). Total = somme pondérée des blocs.")
 
 with t2:
     pick = st.selectbox("Sport à comparer", [x.name for x in results])
@@ -217,7 +230,7 @@ with t3:
     st.caption("Les 12 meilleures activités compatibles avec vos contraintes, score par bloc.")
 
 with t4:
-    st.write("Même profil, trois méthodes de classement (activités filtrées par vos contraintes dans les trois cas) :")
+    st.write("Même profil, trois classements (activités filtrées par vos contraintes dans les trois cas) : TF-IDF seul, SBERT seul, et le modèle hybride retenu :")
     cols = st.columns(len(out["methods"]))
     for col, (name, items) in zip(cols, out["methods"].items()):
         col.markdown(f"**{name}**")

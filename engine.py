@@ -100,6 +100,8 @@ class UserProfile:
     budget_seance_max: int | None = None
     sessions_per_week: int = 3
     minutes: int = 60
+    avoid_families: list = field(default_factory=list)   # familles refusées (ajoutées par la conversation)
+    intensity_shift: int = 0                             # -1 « moins intense », +1 « plus intense » (conversation)
 
 
 @dataclass
@@ -253,7 +255,7 @@ class Recommender:
         if not envs and len(env_txt) == 1:
             envs = list(env_txt)
         families = set(p.families) | {TEXT_FAM[k] for k in sig.prefs if k in TEXT_FAM}
-        dislike_fam = {TEXT_FAM[k] for k in sig.disliked if k in TEXT_FAM}
+        dislike_fam = {TEXT_FAM[k] for k in sig.disliked if k in TEXT_FAM} | set(p.avoid_families)
         families -= dislike_fam
 
         tol = p.impact_tolerance
@@ -269,7 +271,7 @@ class Recommender:
         no_out = "no_outdoor" in sig.constraints or p.environnement == "intérieur"
         no_in = "no_indoor" in sig.constraints or p.environnement == "extérieur"
 
-        target = float(np.clip(1 + 0.5 * ab["endurance"] + 0.5 * L + 0.25 * (p.motivation - 3), 1, 5))
+        target = float(np.clip(1 + 0.5 * ab["endurance"] + 0.5 * L + 0.25 * (p.motivation - 3) + p.intensity_shift, 1, 5))
         if sig.gentle:
             if target > 2.0:
                 notes.append("Pratique douce demandée dans votre texte : intensité cible plafonnée à 2/5")

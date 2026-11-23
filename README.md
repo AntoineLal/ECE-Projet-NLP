@@ -1,7 +1,7 @@
 # 🏃 ECE-Projet-NLP — Recommandation intelligente d'activités sportives
 
 > **Thème 7** — Recommandation d'activités sportives fondée sur l'analyse sémantique du profil physique et des objectifs personnels.
-> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 106 disciplines et
+> L'utilisateur décrit son profil **avec ses propres mots** ; le système le comprend (NLP), le compare à 126 disciplines et
 > propose un **top 5 expliqué**, avec la possibilité de voir *pourquoi* chaque sport est recommandé ou écarté.
 >
 > ⚠️ Outil d'aide à la **découverte** d'activités. Ce n'est ni un diagnostic médical ni une prescription d'exercices.
@@ -9,7 +9,7 @@
 | | |
 |---|---|
 | **Entrée** | un texte libre + 4 échelles rapides (endurance, force, mobilité, motivation) + niveau + disponibilité |
-| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 106 sports |
+| **Sortie** | top 5 des sports, scores par bloc, explications, visualisations, tableau de décision des 126 sports |
 | **NLP** | prétraitement FR, extraction par lexiques + négation, SBERT multilingue, TF-IDF, similarité cosinus |
 | **Stack** | Python 3.12 · Streamlit · sentence-transformers · scikit-learn · NLTK · pandas · Plotly |
 
@@ -35,9 +35,10 @@ streamlit run app.py
 ```
 
 Le premier lancement télécharge le modèle SBERT (`paraphrase-multilingual-MiniLM-L12-v2`, ~470 Mo) et met en cache les
-embeddings des 106 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
+embeddings des 126 sports dans `data/.cache/`. Sans modèle (hors-ligne), l'application bascule automatiquement sur TF-IDF seul.
 
 - **Page principale** : questionnaire → top 5 → section « Pourquoi ce résultat ? » → visualisations.
+- **Bonus IA** (facultatif) : copiez `.env.example` en `.env` et renseignez votre clé Gemini gratuite. Détails dans la section 6ter.
 - **Page Admin** (menu latéral) : supervision, logs, historique, tests. Mot de passe optionnel via `ADMIN_PASSWORD`.
 
 ---
@@ -106,7 +107,7 @@ flowchart TB
 flowchart TB
     P["Page principale"] --> S["📋 Synthèse de mon profil<br/>ce que l'application a compris"]
     P --> T["🏆 Mon top 5<br/>score + explication par sport"]
-    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 106 → compatibles → top 5"]
+    P --> W["🔍 Pourquoi ce résultat ?<br/>entonnoir 126 → compatibles → top 5"]
     P --> V["📊 Visualisations<br/>barres, radar, carte des affinités"]
     W --> W1["✅ Pourquoi ce sport est recommandé"]
     W --> W2["🟡 Pourquoi il n'est pas dans le top 5"]
@@ -117,7 +118,7 @@ flowchart TB
     A --> A4["✅ Tests de cohérence"]
 ```
 
-La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 106 sports :
+La section **« Pourquoi ce résultat ? »** permet de choisir *n'importe quel* des 126 sports :
 
 | Statut | Ce que l'écran montre |
 |---|---|
@@ -143,7 +144,7 @@ projet/
 ├── shared.py              # Chargement unique du modèle SBERT et du moteur (cache Streamlit)
 ├── telemetry.py           # Journalisation : runs (JSONL) + logs applicatifs
 ├── data/
-│   ├── sports.xlsx        # dataset unique : 106 sports × 40 champs (+ feuille « Guide des champs »)
+│   ├── sports.xlsx        # dataset unique : 126 sports × 40 champs (+ feuille « Guide des champs »)
 │   ├── .cache/            # embeddings SBERT mis en cache (non versionné)
 │   └── logs/              # runs.jsonl, app.log (non versionnés)
 ├── .streamlit/config.toml
@@ -171,7 +172,7 @@ flowchart TB
     EXT --> PRE
     ENG --> SB
     ENG --> TF[["TF-IDF<br/>scikit-learn"]]
-    ENG --> DATA[("data/sports.xlsx<br/>106 sports")]
+    ENG --> DATA[("data/sports.xlsx<br/>126 sports")]
 
     TEL --> RUNS[("data/logs/<br/>runs.jsonl · app.log")]
     ADM --> RUNS
@@ -204,12 +205,12 @@ sequenceDiagram
     E->>X: extract_signals(texte)
     X-->>E: objectifs, zones, préférences, contraintes, blessures, douceur, budget
     E->>E: resolve() : fusion formulaire + texte, intensité cible
-    E->>E: filter_hard() : 106 sports → sports compatibles
+    E->>E: filter_hard() : 126 sports → sports compatibles
     E->>S: embeddings des 4 textes-blocs de l'utilisateur
-    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 106 sports
+    S-->>E: similarités cosinus (SBERT + TF-IDF) pour les 126 sports
     E->>E: score structuré + sémantique par bloc, agrégation pondérée
     E->>E: garde-fous multiplicatifs, tri, top 5, explications
-    E-->>A: résultats + anatomie de la décision des 106 sports + temps par étape
+    E-->>A: résultats + anatomie de la décision des 126 sports + temps par étape
     A->>T: log_run() (runs.jsonl, app.log)
     A-->>U: top 5, synthèse, « Pourquoi ? », graphiques
 ```
@@ -228,7 +229,7 @@ flowchart LR
     RT --> UT["4 textes utilisateur<br/>(1 par bloc)"]
     UT --> EMB["SBERT : embedding"]
     UT --> STM["Stop-words + racines Snowball"] --> TFV["TF-IDF (1-2 grammes)"]
-    EMB --> COS["Similarité cosinus<br/>vs 106 textes-blocs de sports"]
+    EMB --> COS["Similarité cosinus<br/>vs 126 textes-blocs de sports"]
     TFV --> COS
     SIG --> STR["Scores structurés<br/>+ filtres + garde-fous"]
     COS --> AGG["Agrégation pondérée"]
@@ -248,7 +249,7 @@ flowchart LR
 
 ### 3.5 Modèle de données de la décision
 
-`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 106 sports** :
+`Recommender.recommend()` renvoie un dictionnaire dont l'entrée `anatomy` contient, **pour chacun des 126 sports** :
 
 ```text
 sport_id, name
@@ -296,7 +297,7 @@ $$
 
 - $S_b$ : score **structuré** (règles, voir 4.3) ;
 - $M_b$ : score **sémantique** ; le cosinus entre le texte utilisateur du bloc et le texte-bloc de chaque sport est normalisé
-  (min-max) sur les 106 sports, car les cosinus SBERT sont tous dans une plage étroite ;
+  (min-max) sur les 126 sports, car les cosinus SBERT sont tous dans une plage étroite ;
 - si $S_b$ ou $M_b$ est absent, l'autre est utilisé seul.
 
 ### 4.3 Scores structurés $S_b$
@@ -395,7 +396,7 @@ et affiché dans la page Admin.
 
 ## 5. Données
 
-`data/sports.xlsx` : **106 disciplines** × 40 champs, dataset unique (voir la feuille « Guide des champs »).
+`data/sports.xlsx` : **126 disciplines** × 40 champs, dataset unique (voir la feuille « Guide des champs »).
 
 | Famille de champs | Exemples |
 |---|---|
@@ -429,7 +430,7 @@ Page **Admin** (menu latéral) :
 | 🎛️ Labo de sensibilité | variation des poids et mouvement du classement (▲ ▼ 🆕) |
 | ✅ Tests | **19 scénarios de cohérence** (contact, genou douloureux, pratique seul, genou fragile, ne sait pas nager, pas de contact, budget, blessure à l'épaule, tendinite au coude, combat, collectif, exemple de l'énoncé, vertiges, détente, salle, dos, équipe sans contact, pluie, budget nul) |
 | 🧠 Modèles NLP | comparaison des 4 modèles (scénarios, précision, robustesse, latence, accord), historique des benchmarks, détail par intention, runs de production par modèle |
-| 🧬 Dataset | statistiques et exploration des 106 sports |
+| 🧬 Dataset | statistiques et exploration des 126 sports |
 
 Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/app.log` (non versionnés).
 
@@ -437,14 +438,12 @@ Les runs sont écrits dans `data/logs/runs.jsonl` et les logs dans `data/logs/ap
 
 ## 6bis. Comparaison des modèles NLP
 
-L'application permet de choisir le modèle sémantique dans la barre latérale. Quatre modèles sont comparés :
+L'application permet de choisir le modèle sémantique dans la barre latérale. Deux modèles sont comparés :
 
 | Clé | Modèle | Rôle |
 |---|---|---|
 | `tfidf` | TF-IDF seul | référence lexicale, sans réseau de neurones |
 | `minilm` | SBERT MiniLM multilingue (**défaut**) | embeddings multilingues légers |
-| `camembert` | sentence-camembert-base | entraîné sur le français |
-| `mpnet` | paraphrase-multilingual-mpnet-base-v2 | version plus grande, multilingue |
 
 **Mesures** (module `benchmark.py`, jeux de test dans `personas.py` et `gold.py`) :
 
@@ -459,25 +458,140 @@ L'application permet de choisir le modèle sémantique dans la barre latérale. 
 |---|---|---|---|---|
 | TF-IDF seul | 19/19 | 0,64 | 0,32 | ~40 ms |
 | SBERT MiniLM (défaut) | 19/19 | 0,71 | 0,41 | ~125 ms |
-| CamemBERT | 19/19 | 0,71 | 0,41 | ~240 ms |
-| MPNet multilingue | 19/19 | 0,71 | 0,38 | ~220 ms |
 
 **Lecture honnête** : les contraintes ne départagent pas les modèles (elles sont traitées par des règles). Les écarts
 de précision et de robustesse sont faibles, et le jeu compte 14 intentions : un écart inférieur à 0,05 n'est pas
-significatif. MiniLM est retenu par défaut : il est environ deux fois plus rapide que CamemBERT ou MPNet pour une
-précision comparable. Le panneau Admin (onglet « 🧠 Modèles NLP ») permet de relancer le benchmark et d'élargir le jeu.
+significatif. SBERT MiniLM est retenu par défaut : il apporte un gain de précision et de robustesse par rapport au TF-IDF seul,
+pour un surcoût de latence modeste. Le panneau Admin (onglet « 🧠 Modèles NLP ») permet de relancer le benchmark et d'élargir le jeu.
 
 ```bash
 python benchmark.py   # exécution en ligne de commande
 ```
 
+## 6ter. Bonus IA : explications et assistant conversationnel
+
+Ces deux bonus **ne remplacent pas le moteur NLP** : l'application fonctionne intégralement sans eux.
+
+### Bonus A : explication personnalisée d'une recommandation
+
+Sous chaque sport recommandé, le bouton **« ✨ Expliquer avec l'IA »** demande à un modèle de langage de rédiger une
+explication en français, à partir d'un dossier construit **uniquement** à partir des résultats du moteur : score global,
+scores par bloc, critères forts et faibles, garde-fous, contraintes vérifiées, profil structuré. Le texte libre de
+l'utilisateur n'est pas transmis.
+
+La réponse est **vérifiée** avant affichage (`bonus_llm.validate_text`) :
+
+| Contrôle | Pourquoi |
+|---|---|
+| chaque chiffre doit provenir du moteur (ou être une échelle de 1 à 5) | le LLM ne peut pas inventer un score |
+| aucun autre sport du jeu de données ne doit être cité | le LLM ne peut pas changer la recommandation |
+| aucune formulation médicale (« diagnostic », « prescri… ») | pas de diagnostic |
+| longueur maximale | explication concise |
+
+Si l'IA est absente, si le quota est épuisé, si le fournisseur est en erreur ou si la réponse est rejetée, l'application
+affiche **l'explication classique déjà produite par le moteur**, avec la raison du repli.
+
+### Bonus B : assistant conversationnel qui affine le profil
+
+Sous le premier classement, une conversation (`st.chat_message` et `st.chat_input`) permet de modifier le profil ou de
+poser des questions. Le déroulé :
+
+1. **Lecture du message** : par règles (`extraction.py`, avec gestion des négations) et, si configuré, par le LLM qui
+   renvoie un objet JSON. Les deux résultats sont fusionnés, le LLM ayant la priorité sur les valeurs qu'il fournit.
+2. **Validation** (`bonus_chatbot.validate_updates`) : seuls les champs de `UserProfile` sont acceptés, avec leurs bornes.
+   Un champ inconnu (« taille », « score ») ou une valeur hors bornes est rejeté et signalé.
+3. **Fusion** (`apply_updates`) : ce qui n'est pas mentionné est conservé. Une nouvelle négation retire une préférence
+   antérieure. Le message est ajouté au texte du profil pour que l'analyse NLP le prenne en compte.
+4. **Recalcul** : `engine.recommend` est relancé avec le profil mis à jour. Aucun classement n'est produit par le LLM.
+5. **Explication du changement** (`compare_rankings`, `describe_change`) : entrées et sorties du top 3, mouvements de rang.
+6. **Questions** (`answer_question`) : « pourquoi X ? », « différence entre X et Y ? », « quels critères ? » reçoivent une
+   réponse fondée sur les résultats calculés (tableau comparatif, critères forts et faibles).
+
+Les modifications apparaissent dans le panneau « 🧩 Ajouté pendant la conversation », et un bouton permet d'annuler la
+dernière modification.
+
+### Pourquoi le LLM ne remplace pas les calculs
+
+Un LLM génératif n'est pas un moteur de similarité : son résultat n'est pas reproductible et il peut inventer un chiffre ou
+un classement. Ici, les scores (SBERT, TF-IDF, règles, garde-fous) sont calculés par le moteur. Le LLM ne fait que
+**rédiger** un texte à partir de ces résultats, ou **lire** un message ; chacune de ses sorties est contrôlée.
+
+### Technologies et justification
+
+| Besoin | Choix | Justification |
+|---|---|---|
+| Modèle de langage gratuit | **Google Gemini API** (niveau gratuit), modèle configurable (`GEMINI_MODEL`) | gratuit sans abonnement pour un usage de cours ; le nom du modèle peut évoluer, d'où la configuration |
+| Alternative locale | **Ollama** (`LLM_PROVIDER=ollama`) | aucune clé, aucune donnée envoyée à l'extérieur |
+| Appels HTTP | `requests` | bibliothèque standard et légère, pas de SDK à installer |
+| Secrets | `.env` (python-dotenv) ou `st.secrets` | la clé n'est jamais dans le code ni dans Git (`.env` et `.streamlit/secrets.toml` sont exclus) |
+| Tests | `unittest` (bibliothèque standard) | aucune dépendance supplémentaire |
+
+### Architecture et flux de données
+
+| Module | Rôle |
+|---|---|
+| `llm_config.py` | configuration (fournisseur, modèle, limites), lecture de `.env`, masquage de la clé |
+| `bonus_llm.py` | appel au LLM, dossier structuré, consignes, vérification de la réponse, repli, budget d'appels |
+| `bonus_chatbot.py` | lecture des messages, validation, fusion dans le profil, recalcul, comparaison, réponses sur les sports |
+| `bonus_ui.py` | affichage Streamlit : bouton d'explication, conversation, panneau des ajouts |
+| `engine.py` | ajoute `avoid_families` et `intensity_shift` à `UserProfile` ; aucun autre changement de calcul |
+
+Flux du bonus A : `engine.recommend` → `bonus_llm.build_payload` → `call_llm` → `validate_text` → affichage, ou repli.
+Flux du bonus B : message → `interpret` (règles, puis LLM validé) → `apply_updates` → `engine.recommend` → `compare_rankings`
+→ affichage.
+
+### Configurer gratuitement Gemini
+
+1. Créez une clé gratuite sur Google AI Studio.
+2. Copiez `.env.example` en `.env` à la racine du projet, puis renseignez `GEMINI_API_KEY=` avec **votre** clé.
+3. Vérifiez que `GEMINI_MODEL` correspond à un modèle disponible pour votre compte (valeur par défaut : `gemini-2.5-flash`).
+4. Pour une alternative sans clé : installez Ollama, exécutez `ollama pull llama3.2`, puis mettez `LLM_PROVIDER=ollama` dans `.env`.
+
+Sans clé, l'application fonctionne : les boutons affichent l'explication classique, et la conversation utilise les règles.
+
+### Confidentialité et limites d'usage
+
+- Les explications n'envoient que des champs structurés, jamais le texte libre du profil.
+- Le message de la conversation est envoyé au LLM pour être lu (c'est le but du bonus). Ne saisissez pas d'informations
+  d'identité. Pour désactiver cet envoi, mettez `LLM_CHAT_USE_LLM=0` : la conversation fonctionne alors par règles seules.
+- Quota : `LLM_MAX_CALLS` limite le nombre d'appels par session (15 par défaut). Une même explication est mise en cache.
+- L'historique de la conversation n'est pas renvoyé au LLM : seuls le dernier message et le profil structuré le sont.
+
+### Tests des bonus
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Les tests utilisent un LLM **simulé** (faux transport) et un serveur HTTP local qui imite l'API Gemini : aucun quota n'est
+consommé. Ils s'exécutent avec le moteur TF-IDF, dont les règles de filtrage et de score sont identiques à celles de SBERT.
+
+**Résultat de la dernière exécution** : 37 tests, tous réussis. Ils couvrent la génération à partir des vrais scores,
+l'absence de clé et les erreurs du fournisseur (quota, erreur, délai, serveur local injoignable), l'extraction des
+préférences positives et négatives, les demandes ambiguës, la conservation du profil, le recalcul réel, le fonctionnement
+sans bonus, l'absence d'invention de scores ou de sports par le LLM, et la clé absente de l'URL.
+
+**Comparaison avant / après une conversation** (test `test_6_new_constraint_really_changes_the_ranking`, moteur TF-IDF,
+profil « je veux nager… », message « je n'aime pas les sports aquatiques et je préfère les activités individuelles en
+extérieur ») :
+
+- Avant : Natation en eau libre · Kayak en eau calme · Natation en bassin
+- Après : Marche active urbaine · Tchoukball · Jogging en parc
+
+Les trois sports aquatiques sont sortis du top 3, et les nouveaux sports ont été classés par le moteur.
+
+**Non testé** : un appel réel à l'API Gemini, car aucune clé n'était disponible pendant le développement. Le format de
+requête est vérifié contre un serveur simulé ; la première vraie exécution reste à faire avec votre clé.
+
 ## 7. Limites et pistes d'évolution
 
 **Limites connues**
 
-- Jeu de données restreint : 106 sports ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
+- Bonus IA : aucun appel réel à Gemini n'a été effectué pendant le développement (tests simulés). Les extractions du chatbot restent des lexiques : une formulation inhabituelle peut passer inaperçue, la conversation pose alors une question.
+
+- Jeu de données restreint : 126 sports ; un profil très contraint (blessure + pratique douce + intérieur) laisse peu de candidats.
 - L'extraction est à base de lexiques : une tournure inhabituelle peut ne pas être détectée (la synthèse du profil montre toujours ce qui a été compris).
-- Les scores sont relatifs à un jeu de 106 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
+- Les scores sont relatifs à un jeu de 126 sports (normalisation min-max) : ils servent à classer, pas à mesurer une « adéquation absolue ».
 - Annotations non validées médicalement.
 
 **Extensions envisagées** (le moteur fonctionne indépendamment) : chatbot d'affinage, explications par LLM, RAG sur une base documentaire,

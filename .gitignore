@@ -7,3 +7,7 @@ data/.cache/
 data/logs/
 ~$*
 data/disciplines.xlsx
+
+# Secrets : ne jamais committer
+.env
+.streamlit/secrets.toml
